@@ -5,9 +5,9 @@
  * 所以「push 到 main 並提高 manifest 版本號」就等於對所有從 GitHub 安裝的使用者發布更新通知。
  */
 (function (root) {
-  const CQ = (root.CQ = root.CQ || {});
+  const GQ = (root.GQ = root.GQ || {});
 
-  const GUIDE_URL = 'https://me.asdtw.org/articles/claude-queue-guide.html';
+  const GUIDE_URL = 'https://me.asdtw.org/articles/gemini-queue-guide.html';
 
   /** Chrome 的版本號格式：1–4 段、以點分隔的整數 */
   function parse(v) {
@@ -33,14 +33,14 @@
     return 0;
   }
 
-  CQ.version = Object.freeze({
+  GQ.version = Object.freeze({
     parse,
     isValid,
     compare,
     GUIDE_URL,
     UPDATE_GUIDE_URL: GUIDE_URL + '#s12', // 教學第 12 節「更新到新版本」
-    MANIFEST_URL: 'https://raw.githubusercontent.com/ivantw829/claude-queue/main/manifest.json',
-    CHANGES_URL: 'https://github.com/ivantw829/claude-queue/commits/main',
+    MANIFEST_URL: 'https://raw.githubusercontent.com/ivantw829/gemini-queue/main/manifest.json',
+    CHANGES_URL: 'https://github.com/ivantw829/gemini-queue/commits/main',
     CHECK_INTERVAL_MS: 24 * 60 * 60 * 1000
   });
 })(globalThis);

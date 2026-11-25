@@ -1,8 +1,8 @@
 {
   "extName": {
-    "message": "Claude Queue"
+    "message": "Gemini Queue"
   },
   "extDescription": {
-    "message": "Saves messages you try to send when claude.ai usage is maxed out, and helps you send them after the limit resets."
+    "message": "Saves messages you try to send when gemini.google.com usage reaches its limit, and helps you send them after the quota resets."
   }
 }

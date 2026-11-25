@@ -2,9 +2,9 @@
  * Popup：顯示用量、重置倒數、佇列清單（刪除 / 編輯 / 立即嘗試）。
  */
 (function () {
-  const { STORAGE_KEYS: K, MSG, STATUS } = CQ;
-  const t = CQ.t;
-  const { formatClock, formatCountdown } = CQ.i18n;
+  const { STORAGE_KEYS: K, MSG, STATUS } = GQ;
+  const t = GQ.t;
+  const { formatClock, formatCountdown } = GQ.i18n;
 
   let queue = [];
   let usage = null;
@@ -14,10 +14,10 @@
   let pollMs = 2 * 60 * 1000; // 用量輪詢間隔（估計下次檢查時間用）
   let alarmAt = null; // 自動重設 alarm 的排程時間
   let staleRequestedAt = 0; // 上次因為快照過時而要求重抓的時間
-  let sourceNote = ''; // 暫時提示（例如沒有開著的 claude.ai 分頁）
+  let sourceNote = ''; // 暫時提示（例如沒有開著的 gemini.google.com 分頁）
   const editing = new Set(); // 正在編輯的項目 id（重繪時保留狀態）
 
-  CQ.i18n.applyI18n(document);
+  GQ.i18n.applyI18n(document);
 
   function send(type, payload = {}) {
     return chrome.runtime.sendMessage({ type, ...payload });
@@ -52,12 +52,11 @@
     const source = document.getElementById('usageSource');
     status.className = 'status-line';
     if (!usage) {
-      status.textContent = t('usageUnknownOpenClaude');
-      source.textContent = sourceNote;
+      status.textContent = sourceNote || t('usageUnknownOpenGemini');
+      source.textContent = '';
       return;
     }
-    if (CQ.session.staleAfterReset(usage)) {
-      // 重置時間已經過了，但快照是之前抓的 → 不要再顯示「已滿」
+    if (GQ.session.staleAfterReset(usage)) {
       status.textContent = t('usageResetPassed');
     } else if (usage.full === true) {
       status.classList.add('full');
@@ -69,6 +68,9 @@
     } else if (usage.full === false) {
       status.classList.add('ok');
       status.textContent = t('usageAvailable');
+    } else if (usage.source === 'dom' && !usage.error) {
+      status.classList.add('ok');
+      status.textContent = t('usageDomStandby');
     } else {
       status.textContent = t('usageUnknown');
     }
@@ -81,7 +83,8 @@
     }[usage.source] || 'sourceNone';
     const ago = Math.max(0, Math.round((Date.now() - usage.fetchedAt) / 60000));
     source.textContent =
-      t('usageSourceLine', { source: t(srcKey), ago }) + (usage.error ? ` · ${t('usageEndpointError')}` : '') +
+      t('usageSourceLine', { source: t(srcKey), ago }) +
+      (usage.error ? ` · ${t('usageEndpointError')}` : '') +
       (sourceNote ? ` · ${sourceNote}` : '');
   }
 
@@ -103,8 +106,11 @@
   function convLabel(url) {
     try {
       const u = new URL(url);
-      if (CQ.text.isNewChatUrl(url)) return u.pathname.startsWith('/project') ? t('convProject') : t('convNew');
-      return u.pathname.replace(/^\/chat\//, '').slice(0, 8) + '…';
+      const p = GQ.text.stripAccountPrefix(u.pathname);
+      if (GQ.text.isNewChatUrl(url)) return p.startsWith('/gem/') ? t('convGem') : t('convNew');
+      const parts = p.split('/').filter(Boolean);
+      const id = parts[parts.length - 1] || p;
+      return id.slice(0, 8) + '…';
     } catch (_) {
       return url;
     }
@@ -151,7 +157,7 @@
 
     for (const item of active) {
       const li = tpl.content.firstElementChild.cloneNode(true);
-      CQ.i18n.applyI18n(li);
+      GQ.i18n.applyI18n(li);
       li.dataset.id = item.id;
       const b = badgeFor(item);
       const badge = li.querySelector('.badge');
@@ -170,7 +176,7 @@
         files.hidden = false;
         files.textContent = t('popupFiles', {
           count: atts.length,
-          size: CQ.text.formatBytes(atts.reduce((n, a) => n + (a.size || 0), 0)),
+          size: GQ.text.formatBytes(atts.reduce((n, a) => n + (a.size || 0), 0)),
           names: atts.map((a) => a.name).join('、')
         });
         files.title = files.textContent;
@@ -245,7 +251,6 @@
     const del = li.querySelector('.btn-delete');
     let confirmTimer = null;
     del.addEventListener('click', async () => {
-      // 兩段式確認，避免誤刪
       if (!del.classList.contains('confirming')) {
         del.classList.add('confirming');
         del.textContent = t('btnDeleteConfirm');
@@ -271,7 +276,7 @@
     }
     el.hidden = false;
     const st = keepalive || {};
-    const s = CQ.session.keepaliveStatus(usage, st, { queue, alarmAt, pollMs });
+    const s = GQ.session.keepaliveStatus(usage, st, { queue, alarmAt, pollMs });
     const time = s.time ? formatClock(s.time) : '?';
     let text = {
       paused: () => t('popupKeepalivePaused'),
@@ -287,16 +292,16 @@
     el.textContent = text;
   }
 
-  /** 快照的重置時間已經過了 → 請 SW 叫 claude.ai 分頁重抓（最多每 30 秒一次） */
+  /** 快照的重置時間已經過了 → 請 SW 叫 gemini.google.com 分頁重抓（最多每 30 秒一次） */
   function refreshIfStale() {
-    if (!CQ.session.staleAfterReset(usage) || Date.now() - staleRequestedAt < 30000) return;
+    if (!GQ.session.staleAfterReset(usage) || Date.now() - staleRequestedAt < 30000) return;
     staleRequestedAt = Date.now();
     send(MSG.USAGE_REFRESH_REQUEST).catch(() => {});
   }
 
   async function loadAlarm() {
     try {
-      const a = await chrome.alarms.get(CQ.ALARMS.KEEPALIVE);
+      const a = await chrome.alarms.get(GQ.ALARMS.KEEPALIVE);
       alarmAt = a ? a.scheduledTime : null;
     } catch (_) {
       alarmAt = null;
@@ -336,19 +341,19 @@
     const current = chrome.runtime.getManifest().version;
     const st = update || {};
     let kind = null;
-    if (st.latest && CQ.version.compare(st.latest, current) > 0 && st.dismissedVersion !== st.latest) kind = 'newer';
-    else if (st.updatedFrom && CQ.version.compare(current, st.updatedFrom) > 0) kind = 'updated';
+    if (st.latest && GQ.version.compare(st.latest, current) > 0 && st.dismissedVersion !== st.latest) kind = 'newer';
+    else if (st.updatedFrom && GQ.version.compare(current, st.updatedFrom) > 0) kind = 'updated';
     box.hidden = !kind;
     if (!kind) return;
     const link = box.querySelector('.link');
     if (kind === 'newer') {
       box.querySelector('.msg').textContent = t('updateAvailable', { version: st.latest });
       link.textContent = t('updateHowTo');
-      link.href = CQ.version.UPDATE_GUIDE_URL;
+      link.href = GQ.version.UPDATE_GUIDE_URL;
     } else {
       box.querySelector('.msg').textContent = t('updateDone', { version: current });
       link.textContent = t('updateChanges');
-      link.href = CQ.version.CHANGES_URL;
+      link.href = GQ.version.CHANGES_URL;
     }
     box.dataset.kind = kind;
   }
@@ -357,7 +362,6 @@
     const kind = document.getElementById('updateNotice').dataset.kind;
     if (kind) send(MSG.UPDATE_DISMISS, { kind });
   });
-  // 看過更新內容就不用再提示
   document.querySelector('#updateNotice .link').addEventListener('click', () => {
     if (document.getElementById('updateNotice').dataset.kind === 'updated') send(MSG.UPDATE_DISMISS, { kind: 'updated' });
   });
@@ -365,7 +369,6 @@
   // ───────────── 初始化 ─────────────
 
   async function init() {
-    // 顯示目前載入的版本，方便確認更新是否已生效
     document.getElementById('version').textContent = 'v' + chrome.runtime.getManifest().version;
     const data = await chrome.storage.local.get([K.QUEUE, K.USAGE, K.KEEPALIVE, K.UPDATE]);
     update = data[K.UPDATE] || null;
@@ -373,7 +376,7 @@
     queue = data[K.QUEUE] || [];
     usage = data[K.USAGE] || null;
     keepalive = data[K.KEEPALIVE] || null;
-    const settings = await CQ.settings.load();
+    const settings = await GQ.settings.load();
     autoReset = settings.autoReset;
     pollMs = settings.pollMinutes * 60 * 1000;
     await loadAlarm();
@@ -413,16 +416,26 @@
 
     document.getElementById('openOptions').addEventListener('click', () => chrome.runtime.openOptionsPage());
     const refreshBtn = document.getElementById('refresh');
-    refreshBtn.addEventListener('click', async () => {
+    async function triggerRefresh() {
+      if (refreshBtn.disabled) return;
       refreshBtn.disabled = true;
+      sourceNote = t('usageFetchingPage');
+      renderUsage();
       try {
         const res = await send(MSG.USAGE_REFRESH_REQUEST);
+        if (res && res.snapshot) usage = res.snapshot;
         sourceNote = res && res.noTab ? t('usageNeedTab') : '';
         renderUsage();
       } finally {
         refreshBtn.disabled = false;
       }
-    });
+    }
+    refreshBtn.addEventListener('click', triggerRefresh);
+
+    // 初次開啟或尚未抓到 /usage 結構化百分比時，自動觸發一次背景讀取
+    if (!usage || (!usage.session && !usage.weekly && usage.source !== 'simulated')) {
+      triggerRefresh();
+    }
   }
 
   init();

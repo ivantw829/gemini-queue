@@ -3,7 +3,7 @@
  *
  *   node --test test/
  *
- * 快照都用真正的 CQ.usage.buildSnapshot() 從「API 回應＋頁面提示」組出來，
+ * 快照都用真正的 GQ.usage.buildSnapshot() 從「API 回應＋頁面提示」組出來，
  * 這樣工作階段結束後的各種實際狀態（API 回 null、停在 100%、頁面殘留上限提示）都會被涵蓋。
  */
 'use strict';
@@ -142,15 +142,15 @@ function createEnv({ autoReset = true, autoSend = false, now = T0 } = {}) {
       if (r !== true) resolve(undefined);
     });
   const settle = () => new Promise((r) => setTimeout(r, 30));
-  const MSG = ctx.CQ.MSG;
+  const MSG = ctx.GQ.MSG;
 
   /** 依「API 回應 JSON」與「頁面上限提示」組出真正的快照 */
   function snap(apiJson, domText = null) {
-    const api = apiJson ? ctx.CQ.usage.parseUsageResponse(apiJson) : null;
+    const api = apiJson ? ctx.GQ.usage.parseUsageResponse(apiJson) : null;
     const dom = domText
-      ? { limited: true, ...ctx.CQ.usage.parseResetTimeFromText(domText, clock.now) }
+      ? { limited: true, ...ctx.GQ.usage.parseResetTimeFromText(domText, clock.now) }
       : { limited: false };
-    return ctx.CQ.usage.buildSnapshot(api, dom, apiJson ? null : 'HTTP 500', clock.now);
+    return ctx.GQ.usage.buildSnapshot(api, dom, apiJson ? null : 'HTTP 500', clock.now);
   }
   async function pushSnapshot(s) {
     await send({ type: MSG.USAGE_SNAPSHOT, snapshot: s });
@@ -182,7 +182,7 @@ test('session ended: five_hour {0, null} → sends', async () => {
   await env.ready;
   await env.pushSnapshot(env.snap({ five_hour: { utilization: 0, resets_at: null }, seven_day: weekly(T0) }));
   assert.equal(env.keepaliveItems().length, 1);
-  assert.deepEqual(env.calls.created, ['https://claude.ai/new']);
+  assert.deepEqual(env.calls.created, ['https://gemini.google.com/app']);
 });
 
 test('session ended: five_hour is null → sends', async () => {
@@ -222,7 +222,7 @@ test('weekly limit full → does not send, alarm waits for weekly reset', async 
     env.snap({ five_hour: { utilization: 0, resets_at: null }, seven_day: { utilization: 100, resets_at: iso(end) } })
   );
   assert.equal(env.keepaliveItems().length, 0);
-  assert.equal(env.alarms['cq-keepalive'].scheduledTime, end + 90 * 1000);
+  assert.equal(env.alarms['gq-keepalive'].scheduledTime, end + 90 * 1000);
 });
 
 test('usage endpoint failing (DOM only) → does not guess, records why', async () => {
@@ -241,12 +241,12 @@ test('overnight: active session → alarm at end + 90s → alarm fires → sends
   const end = T0 + 1 * H;
   await env.pushSnapshot(env.snap({ five_hour: { utilization: 40, resets_at: iso(end) }, seven_day: weekly(T0) }));
   assert.equal(env.keepaliveItems().length, 0);
-  assert.equal(env.alarms['cq-keepalive'].scheduledTime, end + 90 * 1000);
+  assert.equal(env.alarms['gq-keepalive'].scheduledTime, end + 90 * 1000);
   assert.equal(env.store.keepalive.lastCheck.result, 'session-active');
 
   // 分頁被凍結或沒開，只剩 alarm
   env.clock.now = end + 90 * 1000;
-  env.chrome.alarms.onAlarm.fire({ name: 'cq-keepalive' });
+  env.chrome.alarms.onAlarm.fire({ name: 'gq-keepalive' });
   await env.settle();
   await env.settle();
   assert.equal(env.keepaliveItems().length, 1, 'alarm without a usable tab triggers (page re-checks)');
@@ -254,10 +254,10 @@ test('overnight: active session → alarm at end + 90s → alarm fires → sends
   const it = env.keepaliveItems()[0];
   const claim = await env.send({ type: env.MSG.QUEUE_CLAIM, id: it.id });
   await env.send({ type: env.MSG.QUEUE_MARK_SENT, id: it.id, token: claim.token, confidence: 'strong' });
-  await env.send({ type: env.MSG.KEEPALIVE_BOUND, url: 'https://claude.ai/chat/abc' });
+  await env.send({ type: env.MSG.KEEPALIVE_BOUND, url: 'https://gemini.google.com/app/abc' });
   await env.settle();
-  assert.equal(env.store.keepalive.conversationUrl, 'https://claude.ai/chat/abc');
-  assert.equal(env.alarms['cq-keepalive'].scheduledTime, env.clock.now + 5 * H + 90 * 1000);
+  assert.equal(env.store.keepalive.conversationUrl, 'https://gemini.google.com/app/abc');
+  assert.equal(env.alarms['gq-keepalive'].scheduledTime, env.clock.now + 5 * H + 90 * 1000);
 });
 
 test('overnight with an open tab: alarm asks the tab, idle → sends', async () => {
@@ -266,10 +266,10 @@ test('overnight with an open tab: alarm asks the tab, idle → sends', async () 
   const end = T0 + 1 * H;
   await env.pushSnapshot(env.snap({ five_hour: { utilization: 40, resets_at: iso(end) }, seven_day: weekly(T0) }));
   env.clock.now = end + 90 * 1000;
-  env.setTabs([{ id: 7, url: 'https://claude.ai/chat/zzz', windowId: 1, active: false }]);
+  env.setTabs([{ id: 7, url: 'https://gemini.google.com/app/zzz', windowId: 1, active: false }]);
   const idle = env.snap({ five_hour: null, seven_day: weekly(env.clock.now) });
   env.setResponder((id, msg) => (msg.type === env.MSG.USAGE_REFRESH ? { snapshot: idle } : { ok: true }));
-  env.chrome.alarms.onAlarm.fire({ name: 'cq-keepalive' });
+  env.chrome.alarms.onAlarm.fire({ name: 'gq-keepalive' });
   await env.settle();
   await env.settle();
   assert.equal(env.keepaliveItems().length, 1);
@@ -295,7 +295,7 @@ test('disabled → nothing happens', async () => {
   await env.ready;
   await env.pushSnapshot(env.snap({ five_hour: null, seven_day: weekly(T0) }));
   assert.equal(env.keepaliveItems().length, 0);
-  assert.equal(env.alarms['cq-keepalive'], undefined);
+  assert.equal(env.alarms['gq-keepalive'], undefined);
 });
 
 test('three failures pause; seeing an active session resumes', async () => {
@@ -324,13 +324,13 @@ test('simulate: session ends → sends; simulating again right after → sends a
   const env = createEnv();
   await env.ready;
   const simulate = async (minutes) => {
-    const s = env.ctx.CQ.settings.get();
+    const s = env.ctx.GQ.settings.get();
     await env.chrome.storage.local.set({
       settings: { ...s, debugSimulate: true, debugSimulateMinutes: minutes, debugSimulateUntil: env.clock.now + minutes * MIN }
     });
     await env.settle();
   };
-  const sim = () => env.ctx.CQ.usage.simulatedStatus(env.clock.now);
+  const sim = () => env.ctx.GQ.usage.simulatedStatus(env.clock.now);
   const sendIt = async () => {
     const it = env.keepaliveItems()[0];
     const claim = await env.send({ type: env.MSG.QUEUE_CLAIM, id: it.id });
@@ -342,7 +342,7 @@ test('simulate: session ends → sends; simulating again right after → sends a
   await simulate(2);
   await env.pushSnapshot(sim());
   assert.equal(env.store.keepalive.lastCheck.result, 'session-active');
-  assert.equal(env.alarms['cq-keepalive'].scheduledTime, env.clock.now + 2 * MIN + 90 * 1000);
+  assert.equal(env.alarms['gq-keepalive'].scheduledTime, env.clock.now + 2 * MIN + 90 * 1000);
   env.clock.now += 3 * MIN;
   await env.pushSnapshot(sim());
   assert.equal(env.keepaliveItems().length, 1, 'simulated session over → auto reset fires');

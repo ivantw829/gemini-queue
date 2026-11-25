@@ -1,133 +1,166 @@
 /*
- * ⚠️ claude.ai 改版時最常需要修改的檔案之一。
+ * ⚠️ gemini.google.com 改版時最常需要修改的檔案之一。
  *
  * 所有 DOM 選擇器集中在這裡。每個項目是「依序嘗試」的候選清單：
- * 第一個是目前（2026 年）觀察到的主要選擇器，其餘是備用。
+ * 第一個是主要選擇器，其餘是備用。
  * 找不到時請用 require()，它會記錄錯誤並在頁面提示「介面可能已改版」，不會靜默失敗。
  *
- * 修正方式：在 claude.ai 開 DevTools → Elements，找到對應元素，
+ * 修正方式：在 gemini.google.com 開 DevTools → Elements，找到對應元素，
  * 把新的選擇器加到該清單最前面即可。
  */
 (function (root) {
-  const CQ = (root.CQ = root.CQ || {});
-  const log = CQ.logger.createLogger('selectors');
+  const GQ = (root.GQ = root.GQ || {});
+  const log = GQ.logger.createLogger('selectors');
 
   const SELECTORS = {
-    // 聊天輸入框（ProseMirror / tiptap 富文字編輯器）
+    // 聊天輸入框（Gemini 使用 rich-textarea 內的 Quill .ql-editor，placeholder 如「問問 Gemini」）
     editor: [
-      'div.ProseMirror[contenteditable="true"]',
-      '[data-testid="chat-input"] [contenteditable="true"]',
-      '[data-testid="chat-input"][contenteditable="true"]',
-      'fieldset [contenteditable="true"]',
-      'div[contenteditable="true"][role="textbox"]'
+      'rich-textarea .ql-editor[contenteditable="true"]',
+      'div.ql-editor[contenteditable="true"][role="textbox"]',
+      'div.ql-editor[contenteditable="true"]',
+      'rich-textarea [contenteditable="true"]',
+      'div[contenteditable="true"][role="textbox"]',
+      'div[contenteditable="true"][aria-label*="Gemini" i]',
+      'div[contenteditable="true"][aria-label*="prompt" i]',
+      'div[contenteditable="true"][aria-label*="提示" i]'
     ],
 
     // 包住輸入框、附件、送出按鈕的容器（用來限縮其他選擇器的搜尋範圍）
     composer: [
-      'fieldset:has(div.ProseMirror)',
-      '[data-testid="chat-input-container"]',
-      'form:has([contenteditable="true"])',
-      'div:has(> div > div.ProseMirror)'
+      'input-area-v2',
+      'input-container',
+      '.input-area-container',
+      'form:has(rich-textarea)',
+      'div:has(> rich-textarea)',
+      'fieldset:has([contenteditable="true"])',
+      'div:has(.ql-editor[contenteditable="true"])'
     ],
 
-    // 送出按鈕（aria-label 可能隨介面語言變動，忽略大小寫）
+    // 送出按鈕（注意：Gemini 生成中可能把同一個 .send-button 切換成 .stop，下方 getSendButton 會排除停止狀態）
     sendButton: [
-      'button[data-testid="chat-input-send"]', // 2026-11 實測（aria-label 依介面語言是「傳送訊息」）
+      'button.send-button:not(.stop)',
+      'button[data-test-id="send-button"]',
       'button[aria-label="Send message" i]',
       'button[aria-label="Send" i]',
+      'button[aria-label="Submit" i]',
       'button[aria-label="傳送訊息"]',
       'button[aria-label="發送訊息"]',
       'button[aria-label="送出訊息"]',
       'button[aria-label="傳送"]',
-      'button[data-testid="send-button"]',
+      'button[aria-label="送出"]',
+      'button[aria-label="提交"]',
+      'button[mattooltip*="Send" i]',
+      'button[mattooltip*="傳送"]',
       'button[type="submit"]'
     ],
 
     // 回應生成中的「停止」按鈕
     stopButton: [
+      'button.send-button.stop',
       'button[aria-label="Stop response" i]',
+      'button[aria-label="Stop generating" i]',
       'button[aria-label*="Stop" i]',
       'button[aria-label*="停止"]',
-      'button[data-testid="stop-button"]'
+      'button:has(mat-icon[fonticon="stop"])',
+      'button[data-test-id="stop-button"]'
     ],
 
-    // 輸入框區域中的附件 / 圖片縮圖（偵測到即放行、不排隊）
+    // 輸入框區域中的附件 / 圖片縮圖
     attachment: [
-      '[data-testid="file-thumbnail"]',
-      '[data-testid*="attachment" i]',
+      'uploader-file-preview',
+      'xap-attachment-preview',
+      '[data-test-id*="file-preview" i]',
       '[data-testid*="file-preview" i]',
-      'img[alt][src^="blob:"]',
+      '[data-testid="file-thumbnail"]',
+      '.file-preview-container',
+      '.attachment-preview',
+      'img[src^="blob:"]',
       'button[aria-label^="Remove" i]',
       'button[aria-label*="移除"]'
     ],
 
     // 輸入區中「每個附件一張」的卡片（用來計數、比對檔名）。
-    // 會合併所有候選的結果，只保留最內層的元素（不含按鈕與 input），所以外層清單容器不會被算成一個附件。
-    // 2026-11 實測：圖片與文件都是 <div data-testid="file-thumbnail" data-cds-attachment>，卡片內有檔名
+    // 會合併所有候選的結果，只保留最內層的元素（不含按鈕與 input）。
     attachmentItem: [
-      '[data-testid="file-thumbnail"]',
-      '[data-cds-attachment]',
-      '[data-testid*="attachment" i]',
+      'uploader-file-preview',
+      'xap-attachment-preview',
+      '[data-test-id*="file-preview" i]',
       '[data-testid*="file-preview" i]',
-      '[data-testid*="file-card" i]'
+      '[data-testid="file-thumbnail"]',
+      '.file-preview-container',
+      '.attachment-preview',
+      'file-chip'
     ],
 
     // 附件卡片上的「移除」按鈕（排隊成功後用來清空輸入區的附件）
-    // 2026-11 實測：<button data-cds-attachment-remove aria-label="移除 檔名">（平常 opacity-0，click() 仍有效）
     attachmentRemove: [
-      'button[data-cds-attachment-remove]',
+      'uploader-file-preview button[aria-label*="Remove" i]',
+      'uploader-file-preview button[aria-label*="移除"]',
+      'button[aria-label^="Remove file" i]',
       'button[aria-label^="Remove" i]',
       'button[aria-label*="移除"]',
-      'button[aria-label*="Delete" i]',
+      'button[aria-label*="刪除"]',
+      'button[aria-label*="Cancel upload" i]',
+      'button[aria-label*="取消上傳"]',
+      'button[data-test-id*="remove" i]',
       'button[data-testid*="remove" i]'
     ],
 
     // 附件上傳中的指示（還原時等它消失才送出）
-    // 2026-11 實測：上傳中的卡片是 data-state="pending" aria-busy="true"，完成後兩者都消失。
-    // 注意：上傳中送出按鈕「不會」被停用，所以一定要等這個指示消失
     attachmentUploading: [
-      '[data-testid="file-thumbnail"][data-state="pending"]',
+      'uploader-file-preview [role="progressbar"]',
+      'uploader-file-preview mat-progress-spinner',
+      'uploader-file-preview mat-spinner',
       '[aria-busy="true"]',
       '[role="progressbar"]',
-      '.animate-spin',
-      '[data-testid*="upload" i][data-state="loading"]'
+      'mat-progress-spinner',
+      'mat-spinner',
+      '[data-state="pending"]',
+      '.animate-spin'
     ],
 
-    // 上傳檔案用的 <input type="file">（還原時用它把檔案加回去）
-    // 2026-11 實測：<input type="file" multiple data-testid="file-upload" id="chat-input-file-upload-onpage">，在 fieldset 內；
-    // 用 DataTransfer 設定 files 再送出 change，claude.ai 會正常上傳
+    // 上傳檔案用的 <input type="file">（若頁面上找不到隱藏 input，attachments.js 會自動改用合成拖放）
     fileInput: [
-      'input[type="file"][data-testid="file-upload"]',
+      'input[type="file"][data-test-id*="upload" i]',
+      'input[type="file"][data-testid*="upload" i]',
       'input[type="file"]:not([webkitdirectory])'
     ],
 
-    // 輸入區的模型選單按鈕（自動重設用來切換模型）
-    // 2026-11 實測：<button data-testid="model-selector-dropdown" aria-haspopup="menu" aria-label="模型：Opus 5.5 高">，
-    // Base UI 選單：要送 pointerdown → mousedown → pointerup → mouseup → click 才會打開（單一 click 不會）。
-    // 選單是 [role="menu"]，模型是 menuitemradio（aria-checked）；投入程度、更多模型是 aria-haspopup="menu" 的子選單。
-    // 在新對話（/new）切換會改到全域預設模型；在既有對話只改該對話
+    // 模型選單按鈕（自動重設用來切換模型，例如 bard-mode-switcher）
     modelSelector: [
-      'button[data-testid="model-selector-dropdown"]',
-      'button[aria-haspopup="menu"][aria-label^="模型"]',
-      'button[aria-haspopup="menu"][aria-label^="Model" i]'
+      'bard-mode-switcher button',
+      '[data-test-id="bard-mode-menu-button"]',
+      'button.input-area-switch',
+      'button[aria-haspopup="menu"][aria-label*="模型"]',
+      'button[aria-haspopup="menu"][aria-label*="Model" i]',
+      'button[aria-haspopup="menu"][aria-label*="mode" i]',
+      'button[aria-haspopup="listbox"][aria-label*="模型"]',
+      'button[aria-haspopup="listbox"][aria-label*="Model" i]'
     ],
 
     // 對話中「使用者的訊息」氣泡（用於確認送出成功、偵測重複）
     userMessage: [
-      '[data-testid="user-message"]',
+      'user-query .query-text',
+      'user-query-content .query-text',
+      'user-query',
       '[data-message-author-role="user"]',
-      '.font-user-message'
+      '.user-query-bubble-with-background',
+      '[data-test-id="user-query"]'
     ],
 
-    // 可能顯示「已達上限」提示的區域（備援偵測用）。
-    // 只掃描這些區域，不掃描整頁，避免讀到聊天內容。
+    // 可能顯示「已達上限」提示的區域（只掃描這些短文字提示區域，避免讀到聊天內容）
     limitBanner: [
+      'rate-limit-banner',
+      'message-banner',
+      'banner-component',
+      '[data-test-id*="limit" i]',
       '[data-testid*="limit" i]',
-      '[data-testid*="rate-limit" i]',
       '[role="alert"]',
       '[role="status"]',
-      'fieldset ~ div',
-      'fieldset > div:not(:has(.ProseMirror))'
+      '.mat-mdc-snack-bar-container',
+      '.cdk-overlay-container [role="dialog"]',
+      'input-area-v2 ~ div',
+      'input-container ~ div'
     ]
   };
 
@@ -148,13 +181,23 @@
     try {
       return all ? Array.from(scope.querySelectorAll(sel)) : scope.querySelector(sel);
     } catch (e) {
-      // :has() 等語法在舊版瀏覽器可能不支援，跳過該候選
       log.warn('invalid selector', { sel, error: e.message });
       return all ? [] : null;
     }
   }
 
-  // 回傳第一個找到的元素，找不到回傳 null（不報錯，用於「可有可無」的檢查）
+  // Gemini 的 .send-button 在生成回應時可能切換為停止按鈕；排除停止狀態避免誤按
+  function isStopButtonElement(el) {
+    if (!el) return false;
+    if (el.classList && el.classList.contains('stop')) return true;
+    const lbl = `${el.getAttribute('aria-label') || ''} ${el.getAttribute('mattooltip') || ''}`;
+    if (/\bstop\b|停止/i.test(lbl)) return true;
+    try {
+      if (el.querySelector && el.querySelector('mat-icon[fonticon="stop"]')) return true;
+    } catch (_) {}
+    return false;
+  }
+
   function find(name, scope = document) {
     for (const sel of list(name)) {
       const el = safeQuery(scope, sel, false);
@@ -163,7 +206,6 @@
     return null;
   }
 
-  // 回傳第一個「有結果」的候選所找到的全部元素
   function findAll(name, scope = document) {
     for (const sel of list(name)) {
       const els = safeQuery(scope, sel, true);
@@ -172,7 +214,6 @@
     return [];
   }
 
-  // 必要元素：找不到就明確報錯並提示使用者
   function require(name, scope = document) {
     const el = find(name, scope);
     if (!el) reportMissing(name);
@@ -187,7 +228,6 @@
     }
   }
 
-  // 找出事件目標所屬的輸入框
   function closestEditor(target) {
     if (!target || !target.closest) return null;
     for (const sel of SELECTORS.editor) {
@@ -205,7 +245,7 @@
       try {
         const el = target.closest(sel);
         if (el) {
-          // button[type=submit] 太泛，必須在輸入框所屬區域內
+          if (isStopButtonElement(el)) continue;
           if (sel === 'button[type="submit"]' && !getComposer()?.contains(el)) continue;
           return el;
         }
@@ -214,7 +254,6 @@
     return null;
   }
 
-  // 以輸入框為基準往上找 composer；找不到就用 editor 的祖先
   function getComposer() {
     const editor = find('editor');
     if (!editor) return null;
@@ -224,19 +263,27 @@
         if (c) return c;
       } catch (_) {}
     }
-    // 備援：往上 4 層
     let el = editor;
     for (let i = 0; i < 4 && el.parentElement; i++) el = el.parentElement;
     return el;
   }
 
-  function getSendButton() {
-    const composer = getComposer();
-    // 優先在 composer 內找，避免抓到頁面其他按鈕
-    return (composer && find('sendButton', composer)) || find('sendButton');
+  function findSendIn(scope) {
+    for (const sel of SELECTORS.sendButton) {
+      const els = safeQuery(scope, sel, true);
+      for (const el of els) {
+        if (!isStopButtonElement(el)) return el;
+      }
+    }
+    return null;
   }
 
-  CQ.selectors = {
+  function getSendButton() {
+    const composer = getComposer();
+    return (composer && findSendIn(composer)) || findSendIn(document);
+  }
+
+  GQ.selectors = {
     SELECTORS,
     find,
     findAll,
@@ -246,6 +293,7 @@
     closestEditor,
     closestSendButton,
     getComposer,
-    getSendButton
+    getSendButton,
+    isStopButtonElement
   };
 })(globalThis);

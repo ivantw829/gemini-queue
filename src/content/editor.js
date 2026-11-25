@@ -1,56 +1,60 @@
 /*
- * 輸入框（ProseMirror 富文字編輯器）的讀取、清空、填入。
+ * 輸入框（Gemini 的 rich-textarea / Quill .ql-editor 富文字編輯器）的讀取、清空、填入。
  *
- * 為什麼不能直接改 innerHTML / value：
- *   ProseMirror 以自己的 document model 為準，直接改 DOM 會被下一次重繪蓋掉，
- *   React 端的「是否可送出」狀態也不會更新（送出按鈕維持 disabled）。
+ * 為什麼不能只改 textContent：
+ *   Quill 與外層 Angular 元件依賴真實的輸入事件與選取範圍變更來同步內部狀態；
+ *   若不觸發對應的 beforeinput / input 事件，送出按鈕會維持 disabled 或送出空字串。
  *
  * 填入策略（依序嘗試，每一步都會讀回比對，成功才停）：
- *   A. execCommand('insertText')：整段一次插入。
- *      瀏覽器會產生真實的 beforeinput/input 事件與 DOM 變更，ProseMirror 的
- *      DOMObserver 會把變更讀回 model，行為最接近使用者打字。雖然 execCommand
- *      已標示為 deprecated，Chrome 仍完整支援，且是目前唯一能產生「可信」輸入的方式。
- *   B. 逐行 insertText + insertParagraph：A 在多行文字時偶爾會把換行合併，
- *      改為每行插入後再插入段落分隔。
- *   C. 合成 paste 事件（ClipboardEvent + DataTransfer text/plain）：
- *      ProseMirror 的 paste handler 會正確解析多行文字；但 claude.ai 會把長文字
- *      貼上轉成「附件」，所以只在文字長度 ≤ 2000 字時使用。
+ *   A. execCommand('insertText') + input 事件：整段一次插入，最接近真實打字。
+ *   B. 逐行 insertText + insertParagraph：若方法 A 把換行合併了，改逐行插入段落。
+ *   C. 合成 paste 事件（ClipboardEvent + DataTransfer text/plain）：備援（≤ 2000 字）。
  *   全部失敗 → 回報失敗，由 UI 提供「複製文字」讓使用者手動貼上（不會遺失內容）。
  */
 (function (root) {
-  const CQ = (root.CQ = root.CQ || {});
-  const log = CQ.logger.createLogger('editor');
-  const { normalizeForCompare } = CQ.text;
+  const GQ = (root.GQ = root.GQ || {});
+  const log = GQ.logger.createLogger('editor');
+  const { normalizeForCompare } = GQ.text;
 
   function getEditor() {
-    return CQ.selectors.find('editor');
+    return GQ.selectors.find('editor');
   }
 
   /**
-   * 讀取輸入框純文字。ProseMirror 每段是一個 <p>，hard break 是 <br>。
+   * 讀取輸入框純文字。Quill（以及 ProseMirror）每段是一個 <p>，空段落是 <p><br></p>。
    * innerText 會在 <p> 之間產生兩個換行，所以自己走訪。
    */
   function getText(editor = getEditor()) {
     if (!editor) return '';
+    if (editor.classList && editor.classList.contains('ql-blank') && !(editor.textContent || '').trim()) {
+      return '';
+    }
     const blocks = Array.from(editor.children);
-    if (blocks.length && blocks.every((b) => b.tagName === 'P')) {
+    if (blocks.length && blocks.every((b) => b.tagName === 'P' || b.tagName === 'DIV')) {
       return blocks
         .map((p) => {
-          if (p.querySelector('br.ProseMirror-trailingBreak') && !p.textContent) return '';
+          // Quill 的空行是 <p><br></p>，ProseMirror 是 <p><br class="ProseMirror-trailingBreak"></p>
+          if (!p.textContent && p.children.length <= 1 && (!p.firstElementChild || p.firstElementChild.tagName === 'BR')) {
+            return '';
+          }
           let out = '';
-          p.childNodes.forEach(function walk(node) {
+          const nodes = Array.from(p.childNodes);
+          nodes.forEach(function walk(node, idx) {
             if (node.nodeType === Node.TEXT_NODE) out += node.nodeValue;
             else if (node.nodeName === 'BR') {
-              if (!node.classList.contains('ProseMirror-trailingBreak')) out += '\n';
-            } else node.childNodes.forEach(walk);
+              const isTrailing =
+                (node.classList && node.classList.contains('ProseMirror-trailingBreak')) ||
+                (idx === nodes.length - 1 && node.parentNode === p);
+              if (!isTrailing) out += '\n';
+            } else node.childNodes.forEach((c, ci) => walk(c, ci));
           });
           return out;
         })
         .join('\n')
-        .replace(/ /g, ' ')
+        .replace(/\u00a0/g, ' ')
         .trim();
     }
-    return (editor.innerText || '').replace(/\n\n/g, '\n').trim();
+    return (editor.innerText || '').replace(/\n\n/g, '\n').replace(/\u00a0/g, ' ').trim();
   }
 
   function isEmpty(editor = getEditor()) {
@@ -58,10 +62,10 @@
   }
 
   function hasAttachments() {
-    const composer = CQ.selectors.getComposer();
+    const composer = GQ.selectors.getComposer();
     if (!composer) return false;
     const editor = getEditor();
-    return CQ.selectors.findAll('attachment', composer).some((el) => !editor || !editor.contains(el));
+    return GQ.selectors.findAll('attachment', composer).some((el) => !editor || !editor.contains(el));
   }
 
   function selectAll(editor) {
@@ -73,19 +77,32 @@
     sel.addRange(range);
   }
 
+  function notifyInput(editor) {
+    try {
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+    } catch (_) {}
+  }
+
   const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
   async function clear(editor = getEditor()) {
     if (!editor) return false;
     selectAll(editor);
     document.execCommand('delete', false);
+    notifyInput(editor);
     await tick();
     if (!isEmpty(editor)) {
-      // 備援：送出 beforeinput deleteContentBackward
       selectAll(editor);
       editor.dispatchEvent(
         new InputEvent('beforeinput', { inputType: 'deleteContentBackward', bubbles: true, cancelable: true })
       );
+      notifyInput(editor);
+      await tick();
+    }
+    if (!isEmpty(editor)) {
+      // Quill 最後備援：重設為單一空段落並通知 Angular / Quill
+      editor.innerHTML = '<p><br></p>';
+      notifyInput(editor);
       await tick();
     }
     const ok = isEmpty(editor);
@@ -100,6 +117,7 @@
   async function methodInsertText(editor, text) {
     selectAll(editor);
     document.execCommand('insertText', false, text);
+    notifyInput(editor);
     await tick(80);
   }
 
@@ -111,6 +129,7 @@
       if (lines[i]) document.execCommand('insertText', false, lines[i]);
       if (i < lines.length - 1) document.execCommand('insertParagraph', false);
     }
+    notifyInput(editor);
     await tick(80);
   }
 
@@ -120,6 +139,7 @@
     const dt = new DataTransfer();
     dt.setData('text/plain', text);
     editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    notifyInput(editor);
     await tick(120);
   }
 
@@ -133,7 +153,7 @@
       ['insertText', methodInsertText],
       ['perLine', methodPerLine]
     ];
-    if (text.length <= CQ.LIMITS.PASTE_FALLBACK_MAX_CHARS) methods.push(['paste', methodPaste]);
+    if (text.length <= GQ.LIMITS.PASTE_FALLBACK_MAX_CHARS) methods.push(['paste', methodPaste]);
 
     for (const [name, fn] of methods) {
       try {
@@ -161,5 +181,5 @@
     sel.addRange(range);
   }
 
-  CQ.editor = { getEditor, getText, isEmpty, hasAttachments, clear, fill };
+  GQ.editor = { getEditor, getText, isEmpty, hasAttachments, clear, fill };
 })(globalThis);

@@ -28,7 +28,7 @@ async function addWithFiles(env, n = 2, over = {}) {
   for (let i = 0; i < n; i++) ids.push((await stage(env, { name: `f${i}.png` })).id);
   const res = await env.send({
     type: env.MSG.QUEUE_ADD,
-    item: { text: 'with files', url: 'https://claude.ai/chat/aaa', resetAt: Date.now() + 60000, attachments: ids, ...over }
+    item: { text: 'with files', url: 'https://gemini.google.com/app/aaa', resetAt: Date.now() + 60000, attachments: ids, ...over }
   });
   return { res, ids };
 }
@@ -66,7 +66,7 @@ test('QUEUE_ADD fails (and does not queue) when a staged file is missing or alre
   const env = await setup();
   const res = await env.send({
     type: env.MSG.QUEUE_ADD,
-    item: { text: 'x', url: 'https://claude.ai/chat/aaa', attachments: ['nope'] }
+    item: { text: 'x', url: 'https://gemini.google.com/app/aaa', attachments: ['nope'] }
   });
   assert.equal(res.ok, false);
   assert.equal(res.error, 'attachment-missing');
@@ -75,7 +75,7 @@ test('QUEUE_ADD fails (and does not queue) when a staged file is missing or alre
   const { ids } = await addWithFiles(env, 1);
   const again = await env.send({
     type: env.MSG.QUEUE_ADD,
-    item: { text: 'y', url: 'https://claude.ai/chat/aaa', attachments: ids }
+    item: { text: 'y', url: 'https://gemini.google.com/app/aaa', attachments: ids }
   });
   assert.equal(again.ok, false, 'a staged file cannot be linked to two items');
   assert.equal(env.store.queue.length, 1);
@@ -83,7 +83,7 @@ test('QUEUE_ADD fails (and does not queue) when a staged file is missing or alre
 
 test('FILE_STAGE rejects files over the size limit and when total storage is full', async () => {
   const env = await setup();
-  const L = env.ctx.CQ.LIMITS;
+  const L = env.ctx.GQ.LIMITS;
   const big = await stage(env, { size: L.MAX_FILE_BYTES + 1 });
   assert.equal(big.ok, false);
   assert.equal(big.error, 'file-too-large');
@@ -96,7 +96,7 @@ test('FILE_STAGE rejects files over the size limit and when total storage is ful
 
 test('QUEUE_ADD rejects more than MAX_FILES_PER_ITEM attachments', async () => {
   const env = await setup();
-  const ids = Array.from({ length: env.ctx.CQ.LIMITS.MAX_FILES_PER_ITEM + 1 }, (_, i) => 's' + i);
+  const ids = Array.from({ length: env.ctx.GQ.LIMITS.MAX_FILES_PER_ITEM + 1 }, (_, i) => 's' + i);
   const res = await env.send({ type: env.MSG.QUEUE_ADD, item: { text: 'x', attachments: ids } });
   assert.equal(res.ok, false);
 });
@@ -132,9 +132,9 @@ test('stale staged files (never linked) are cleaned up; fresh ones are kept', as
   const env = await setup();
   const fresh = await stage(env);
   const old = await stage(env);
-  env.files.get(old.id).stagedAt = Date.now() - env.ctx.CQ.fileStore.STAGE_TTL_MS - 1000;
+  env.files.get(old.id).stagedAt = Date.now() - env.ctx.GQ.fileStore.STAGE_TTL_MS - 1000;
   // 任何一次佇列寫入都會觸發清理
-  await env.send({ type: env.MSG.QUEUE_ADD, item: { text: 'plain', url: 'https://claude.ai/chat/aaa' } });
+  await env.send({ type: env.MSG.QUEUE_ADD, item: { text: 'plain', url: 'https://gemini.google.com/app/aaa' } });
   assert.equal(env.files.has(old.id), false);
   assert.equal(env.files.has(fresh.id), true);
 });
@@ -143,7 +143,7 @@ test('files whose item disappeared from the queue are removed on the next queue 
   const env = await setup();
   await addWithFiles(env, 1);
   env.store.queue = []; // 例如舊版或手動清掉佇列
-  await env.send({ type: env.MSG.QUEUE_ADD, item: { text: 'plain', url: 'https://claude.ai/chat/aaa' } });
+  await env.send({ type: env.MSG.QUEUE_ADD, item: { text: 'plain', url: 'https://gemini.google.com/app/aaa' } });
   assert.equal(env.files.size, 0);
 });
 

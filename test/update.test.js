@@ -11,7 +11,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { createEnv } = require('./helpers/sw-env');
 
-const GUIDE = 'https://me.asdtw.org/articles/claude-queue-guide.html';
+const GUIDE = 'https://me.asdtw.org/articles/gemini-queue-guide.html';
 
 function manifestFetch(version, log = []) {
   return async (url, opts) => {
@@ -25,7 +25,7 @@ function loadVersion() {
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src/shared/version.js'), 'utf8'), ctx);
-  return ctx.CQ.version;
+  return ctx.GQ.version;
 }
 
 const waitAsync = () => new Promise((r) => setTimeout(r, 60));
@@ -47,16 +47,16 @@ test('update check: newer version on GitHub notifies once, later checks do not r
   const env = createEnv({ fetch: manifestFetch('0.4.0', requests) });
   assert.equal(await env.ctx.checkForUpdate('test'), 'newer');
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].url, 'https://raw.githubusercontent.com/ivantw829/claude-queue/main/manifest.json');
+  assert.equal(requests[0].url, 'https://raw.githubusercontent.com/ivantw829/gemini-queue/main/manifest.json');
   assert.equal(requests[0].opts.credentials, 'omit');
   assert.equal(env.store.update.latest, '0.4.0');
   assert.equal(env.store.update.notifiedVersion, '0.4.0');
-  const notes = env.calls.notified.filter((n) => n.id === 'cq-update');
+  const notes = env.calls.notified.filter((n) => n.id === 'gq-update');
   assert.equal(notes.length, 1);
   assert.match(notes[0].message, /v0\.4\.0/);
 
   assert.equal(await env.ctx.checkForUpdate('test'), 'newer');
-  assert.equal(env.calls.notified.filter((n) => n.id === 'cq-update').length, 1);
+  assert.equal(env.calls.notified.filter((n) => n.id === 'gq-update').length, 1);
 });
 
 test('update check: same or older version on GitHub does not notify', async () => {
@@ -101,7 +101,7 @@ test('startup: schedules a daily alarm and checks right away when the last check
   const env = createEnv({ fetch: manifestFetch('0.3.0', requests) });
   env.listeners.startup[0]();
   await waitAsync();
-  const alarm = env.chrome.alarms._a['cq-update-check'];
+  const alarm = env.chrome.alarms._a['gq-update-check'];
   assert.ok(alarm);
   assert.equal(alarm.periodInMinutes, 24 * 60);
   assert.equal(requests.length, 1);
@@ -115,10 +115,10 @@ test('startup: schedules a daily alarm and checks right away when the last check
 test('startup: store install clears the alarm and never fetches', async () => {
   const requests = [];
   const env = createEnv({ installType: 'normal', fetch: manifestFetch('0.4.0', requests) });
-  env.chrome.alarms._a['cq-update-check'] = { name: 'cq-update-check' };
+  env.chrome.alarms._a['gq-update-check'] = { name: 'gq-update-check' };
   env.listeners.startup[0]();
   await waitAsync();
-  assert.equal(env.chrome.alarms._a['cq-update-check'], undefined);
+  assert.equal(env.chrome.alarms._a['gq-update-check'], undefined);
   assert.equal(requests.length, 0);
 });
 
@@ -156,7 +156,7 @@ test('popup dismiss: hides this new version only, and clears the "updated" notic
 
 test('notification click opens the update section of the guide', async () => {
   const env = createEnv();
-  await env.listeners.notifClick[0]('cq-update');
+  await env.listeners.notifClick[0]('gq-update');
   assert.deepEqual(
     env.calls.created.map((t) => t.url),
     [GUIDE + '#s12']

@@ -3,15 +3,15 @@
  * 透過 chrome.storage.onChanged 保持同步。
  */
 (function (root) {
-  const CQ = (root.CQ = root.CQ || {});
-  const KEY = CQ.STORAGE_KEYS.SETTINGS;
+  const GQ = (root.GQ = root.GQ || {});
+  const KEY = GQ.STORAGE_KEYS.SETTINGS;
 
   const DEFAULTS = Object.freeze({
     autoSend: false, // 重置後自動送出（不需確認）
     autoReset: false, // 自動重設：工作階段歸零時送出一則訊息，讓下一個工作階段馬上開始倒數
     autoResetText: 'Hello World!', // 自動重設送出的文字（可在設定頁修改）
-    autoResetModel: 'haiku', // 自動重設在專用對話使用的模型：none（不切換）/ haiku / sonnet / opus
-    autoResetEffort: 'medium', // 自動重設的投入程度：none（不調整）/ low / medium / high / xhigh / max
+    autoResetModel: 'hydrogen', // 自動重設在專用對話使用的模型：none / auto / hydrogen / neon / carbon
+    autoResetEffort: 'low', // 自動重設的思考程度：none（不調整）/ low（低）/ medium（中等）/ high（高）
     notifications: true, // 桌面通知
     pollMinutes: 2, // 用量輪詢頻率（分鐘）
     updateCheck: true, // 每天檢查一次 GitHub 上有沒有新版本（只有從 GitHub 安裝時才會檢查）
@@ -21,8 +21,8 @@
     debugSimulateUntil: 0 // 模擬的重置時間戳
   });
 
-  const RESET_MODELS = ['none', 'haiku', 'sonnet', 'opus'];
-  const RESET_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'];
+  const RESET_MODELS = ['none', 'auto', 'hydrogen', 'neon', 'carbon'];
+  const RESET_EFFORTS = ['none', 'low', 'medium', 'high'];
 
   let cache = { ...DEFAULTS };
   const listeners = new Set();
@@ -74,5 +74,5 @@
 
   const ready = load().catch(() => cache);
 
-  CQ.settings = { DEFAULTS, RESET_MODELS, RESET_EFFORTS, normalize, load, get, update, onChange, ready };
+  GQ.settings = { DEFAULTS, RESET_MODELS, RESET_EFFORTS, normalize, load, get, update, onChange, ready };
 })(globalThis);

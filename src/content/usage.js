@@ -1,113 +1,55 @@
 /*
- * ⚠️ claude.ai 改版時最常需要修改的檔案之一。
+ * ⚠️ gemini.google.com 改版時最常需要修改的檔案之一。
  *
- * 用量偵測：端點、回應欄位解析、頁面「已達上限」文字的備援解析，全部集中在這裡。
+ * 用量偵測（自動讀取 https://gemini.google.com/usage ＋ 頁面上限橫幅雙重偵測）：
+ *   1. 結構化用量擷取（/usage 頁面）：
+ *      - 若目前分頁就是 /usage：等待 Angular 渲染出「目前用量 / 每週上限」與百分比後直接解析 DOM。
+ *      - 若目前在 /app 等聊天頁：請 Service Worker 複用既有的 /usage 分頁、或在背景靜默開啟一個
+ *        暫時的非作用中 /usage 分頁（不搶焦點），讀取完百分比與重設時間後立即自動關閉。
+ *   2. 頁面上限橫幅備援（DOM 偵測）：
+ *      - 掃描聊天頁上的 rate-limit-banner / role=alert 等提示區域，即時攔截上限提示。
+ *   3. 擴充介面（setUsageProvider）：供測試或自訂資料來源注入。
  *
- * ── 端點（2026-11 查證）───────────────────────────────────────────
- *   GET https://claude.ai/api/organizations
- *       → [{ uuid, name, capabilities: [...] , ... }]
- *       （未登入時回 permission_error / account_session_invalid）
- *   GET https://claude.ai/api/organizations/{orgUuid}/usage
- *       → {
- *           "five_hour":  { "utilization": 37.0, "resets_at": "2026-11-03T09:59:59.9+00:00" },
- *           "seven_day":  { "utilization": 12.0, "resets_at": "2026-11-07T03:59:59.9+00:00" },
- *           "seven_day_opus":   { ... } | null,   // 依方案可能出現的模型別週上限
- *           "seven_day_sonnet": { ... } | null,
- *           ...
- *         }
- *   utilization 為 0–100 的百分比；resets_at 為 ISO 8601（也容忍 epoch 秒/毫秒）。
- *   組織 uuid 優先取 cookie `lastActiveOrg`，否則取 /api/organizations 中第一個具 chat 能力的組織。
- *
- * 以上格式非官方公開 API，若改版請在 DevTools → Network 篩選 "usage" 查看實際回應，
- * 並修改下方 ENDPOINTS / FIELD_ALIASES / parseUsageResponse()。
- *
- * 只做 GET 讀取用量；不會送出、重放或偽造任何聊天請求。
+ * 只讀取頁面狀態；絕不偽造或重放任何聊天請求。
  */
 (function (root) {
-  const CQ = (root.CQ = root.CQ || {});
-  const log = CQ.logger.createLogger('usage');
-  const { TIMING, STORAGE_KEYS } = CQ;
-
-  const ENDPOINTS = {
-    organizations: '/api/organizations',
-    usage: (orgId) => `/api/organizations/${encodeURIComponent(orgId)}/usage`
-  };
+  const GQ = (root.GQ = root.GQ || {});
+  const log = GQ.logger.createLogger('usage');
+  const { TIMING } = GQ;
 
   const FIELD_ALIASES = {
-    session: ['five_hour', 'fiveHour', 'session', 'five_hour_limit'],
-    weekly: ['seven_day', 'sevenDay', 'weekly', 'seven_day_limit'],
-    utilization: ['utilization', 'percent', 'percentage', 'used_percent'],
+    session: ['five_hour', 'fiveHour', 'session', 'five_hour_limit', 'rollingWindow'],
+    weekly: ['seven_day', 'sevenDay', 'weekly', 'seven_day_limit', 'weeklyLimit'],
+    utilization: ['utilization', 'percent', 'percentage', 'used_percent', 'pct'],
     resetsAt: ['resets_at', 'resetsAt', 'reset_at', 'resetAt']
   };
 
   const FULL_THRESHOLD = 100;
+  const USAGE_RENDER_WAIT_MS = 10000;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // ───────────────────────── 端點存取 ─────────────────────────
+  // ───────────────────────── 自訂 Provider（測試或擴充用） ─────────────────────────
 
-  async function fetchJson(path) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), TIMING.USAGE_FETCH_TIMEOUT_MS);
-    try {
-      const res = await fetch(path, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { accept: 'application/json' },
-        signal: ctrl.signal
-      });
-      if (!res.ok) {
-        const err = new Error(`HTTP ${res.status} ${path.replace(/[0-9a-f-]{36}/gi, '<org>')}`);
-        err.status = res.status;
-        throw err;
-      }
-      return await res.json();
-    } finally {
-      clearTimeout(timer);
-    }
+  let usageProvider = null;
+
+  function setUsageProvider(fn) {
+    usageProvider = typeof fn === 'function' ? fn : null;
   }
 
-  function readCookie(name) {
-    const m = document.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]+)'));
-    return m ? decodeURIComponent(m[1]) : null;
-  }
-
-  let memOrgId = null;
-
-  async function getOrgId(forceRefresh = false) {
-    if (!forceRefresh) {
-      if (memOrgId) return memOrgId;
-      const fromCookie = readCookie('lastActiveOrg');
-      if (fromCookie && /^[0-9a-f-]{36}$/i.test(fromCookie)) {
-        memOrgId = fromCookie;
-        return memOrgId;
-      }
-      const stored = (await chrome.storage.local.get(STORAGE_KEYS.ORG_ID))[STORAGE_KEYS.ORG_ID];
-      if (stored) {
-        memOrgId = stored;
-        return memOrgId;
-      }
-    }
-    const orgs = await fetchJson(ENDPOINTS.organizations);
-    if (!Array.isArray(orgs) || !orgs.length) throw new Error('organizations: empty or unexpected format');
-    const chatOrg =
-      orgs.find((o) => Array.isArray(o.capabilities) && o.capabilities.includes('chat')) || orgs[0];
-    if (!chatOrg || !chatOrg.uuid) throw new Error('organizations: missing uuid');
-    memOrgId = chatOrg.uuid;
-    await chrome.storage.local.set({ [STORAGE_KEYS.ORG_ID]: memOrgId });
-    return memOrgId;
+  function hasUsageProvider() {
+    return typeof usageProvider === 'function';
   }
 
   async function fetchUsageApi() {
-    let orgId = await getOrgId();
+    if (!usageProvider) return null;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TIMING.USAGE_FETCH_TIMEOUT_MS);
     try {
-      return parseUsageResponse(await fetchJson(ENDPOINTS.usage(orgId)));
-    } catch (e) {
-      // 快取的組織失效（切換帳號）→ 重抓一次
-      if (e.status === 403 || e.status === 404) {
-        log.warn('usage fetch failed with cached org, refreshing org id', { status: e.status });
-        orgId = await getOrgId(true);
-        return parseUsageResponse(await fetchJson(ENDPOINTS.usage(orgId)));
-      }
-      throw e;
+      const raw = await usageProvider({ signal: ctrl.signal });
+      if (!raw) return null;
+      return parseUsageResponse(raw);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -143,13 +85,11 @@
     const session = parseBucket(pick(json, FIELD_ALIASES.session));
     const weekly = parseBucket(pick(json, FIELD_ALIASES.weekly));
     if (!session && !weekly) {
-      throw new Error('usage: no five_hour/seven_day fields (format may have changed)');
+      throw new Error('usage: no session/weekly fields (format may have changed)');
     }
-    // 其他模型別的週上限只顯示，不納入「已滿」判斷（無法得知你正在用哪個模型；
-    // 若真的被擋，頁面會出現上限提示，由 DOM 備援偵測接手）
-    const extras = [];
+    const extras = Array.isArray(json.extras) ? json.extras.slice() : [];
     for (const [key, val] of Object.entries(json)) {
-      if (/^seven_day_/.test(key) && val && typeof val === 'object') {
+      if (/^(seven_day_|model_limit_)/.test(key) && val && typeof val === 'object') {
         const b = parseBucket(val);
         if (b && b.pct != null) extras.push({ key, ...b });
       }
@@ -157,15 +97,115 @@
     return { session, weekly, extras };
   }
 
-  // ───────────────────────── DOM 備援 ─────────────────────────
+  // ───────────────────────── /usage 頁面文字解析 ─────────────────────────
+  //
+  // 2026-11 實測 https://gemini.google.com/usage 結構：
+  //   用量限制 PRO
+  //   ...
+  //   目前用量 ⓘ                                    已使用 4%
+  //   重設時間：下午1:07
+  //   每週上限                                       已使用 0%
+  //   重設時間：12月1日下午1:07
+  //   訂閱 AI Ultra 即享 5 倍用量 ...
+  // 注意：第二張卡片在 DOM 內「重設時間」可能出現在「已使用 X%」之前，因此以區塊標題切分後各自擷取。
+
+  function parseUsageCardSlice(slice, { isSession = false } = {}, now = Date.now()) {
+    if (!slice) return null;
+    const pm =
+      slice.match(/已使用\s*(\d+(?:\.\d+)?)\s*%/i) ||
+      slice.match(/(\d+(?:\.\d+)?)\s*%\s*(?:已使用|used)/i) ||
+      slice.match(/\b(\d{1,3}(?:\.\d+)?)\s*%/);
+    if (!pm) return null;
+    const pct = Math.max(0, Math.min(100, Number(pm[1])));
+
+    const rm =
+      slice.match(/(?:重[設置]時間|重[設置]於|將於)\s*[:：]?\s*([\s\S]+?)(?=\s*(?:已使用|\d+(?:\.\d+)?\s*%|$))/i) ||
+      slice.match(/\bresets?(?:\s+time|\s+at|\s+on)?\s*[:：]?\s*([\s\S]+?)(?=\s*(?:\d+(?:\.\d+)?\s*%\s*used|$))/i);
+
+    let resetsAt = null;
+    if (rm && rm[1]) {
+      const clause = rm[1].replace(/\s+/g, ' ').trim();
+      const parsed = parseResetTimeFromText(clause, now);
+      if (!parsed.estimated && parsed.resetAt) {
+        resetsAt = parsed.resetAt;
+        // 5 小時「目前用量」若剛過期（例如 13:08 讀到「下午1:07」），parseResetTimeFromText 會預設加一天變明天；
+        // 超過 12 小時代表其實是今天剛過的時間，扣回 24 小時讓狀態正確視為已歸零。
+        if (isSession && resetsAt - now > 12 * 60 * 60 * 1000) {
+          resetsAt -= 24 * 60 * 60 * 1000;
+        }
+      }
+    }
+    return { pct, resetsAt };
+  }
+
+  /**
+   * 從 /usage 頁面的可見文字解析出 { session, weekly, extras }。
+   * 尚未渲染完成（找不到區塊或百分比）時回傳 null。
+   */
+  function parseUsagePageText(rawText, now = Date.now()) {
+    const s = String(rawText || '').replace(/\u00a0/g, ' ');
+    if (!s.trim()) return null;
+
+    const sm = s.match(/目前用量|当前用量|\bcurrent\s+usage\b/i);
+    const wm = s.match(/每週上限|每周上限|\bweekly\s+limit\b/i);
+    if (!sm && !wm) return null;
+
+    const anchorEnd = Math.max(sm ? sm.index : 0, wm ? wm.index : 0);
+    const tail = s.slice(anchorEnd);
+    const fm = tail.match(
+      /訂閱\s*AI|订阅\s*AI|用量設定|用量设置|額外用量|额外用量|\b(?:subscribe|upgrade)\s+to\b|\busage\s+settings\b|\bextra\s+usage\b/i
+    );
+    const endIdx = fm ? anchorEnd + fm.index : s.length;
+
+    let session = null;
+    let weekly = null;
+    if (sm) {
+      const stop = wm && wm.index > sm.index ? wm.index : endIdx;
+      session = parseUsageCardSlice(s.slice(sm.index, stop), { isSession: true }, now);
+    }
+    if (wm) {
+      const stop = sm && sm.index > wm.index ? sm.index : endIdx;
+      weekly = parseUsageCardSlice(s.slice(wm.index, stop), { isSession: false }, now);
+    }
+    if (!session && !weekly) return null;
+    return { session, weekly, extras: [] };
+  }
+
+  function extractUsageDomText() {
+    if (!document.body) return '';
+    // 注意：不能移除 side-navigation-v2（它是包住整個主畫面的外層容器），只移除側邊導覽抽屜本身
+    const clone = document.body.cloneNode(true);
+    clone
+      .querySelectorAll('bard-sidenav, mat-sidenav, [role="navigation"], script, style, noscript')
+      .forEach((e) => e.remove());
+    return clone.innerText || clone.textContent || '';
+  }
+
+  /** 在 /usage 頁面等待前端渲染出百分比後解析回傳 */
+  async function readUsagePageDom(timeoutMs = USAGE_RENDER_WAIT_MS) {
+    const end = Date.now() + timeoutMs;
+    while (Date.now() < end) {
+      const parsed = parseUsagePageText(extractUsageDomText(), Date.now());
+      if (parsed) return parsed;
+      await sleep(250);
+    }
+    const lastTry = parseUsagePageText(extractUsageDomText(), Date.now());
+    if (lastTry) return lastTry;
+    throw new Error('usage-page-timeout');
+  }
+
+  // ───────────────────────── DOM 上限橫幅偵測 ─────────────────────────
 
   const LIMIT_PATTERNS = [
-    /\b(usage|message|weekly|session|5-hour)\s+limit\b/i,
-    /\bout of (free )?messages\b/i,
-    /\breached (your|the)\b.{0,30}\blimit\b/i,
-    /\blimit (reached|resets?)\b/i,
-    /(已達|達到|到達).{0,12}(上限|限制|限額)/,
-    /(用量|額度|訊息).{0,6}(上限|已滿|用完|用盡)/
+    /\b(usage|message|weekly|daily|session|5-hour|compute|prompt)\s+limit\b/i,
+    /\bout of (free )?(messages|prompts|uploads)\b/i,
+    /\b(you['’]?ve\s+)?(temporarily\s+)?reached (your|the)\b.{0,45}\blimit\b/i,
+    /\blimit\s+on\s+gemini\b/i,
+    /\blimit (reached|resets?|refreshes?)\b/i,
+    /\bquota\s+(exceeded|reached)\b/i,
+    /(已達|達到|到達).{0,18}(上限|限制|限額|額度)/,
+    /(用量|額度|訊息|對話|次數|算力).{0,8}(上限|已滿|用完|用盡|達上限)/,
+    /暫時達到.{0,15}(上限|限制)/
   ];
 
   function isLimitText(text) {
@@ -177,9 +217,9 @@
    * 並排除輸入框與訊息氣泡，避免讀取聊天內容。
    */
   function detectLimitFromDom(now = Date.now()) {
-    const editor = CQ.selectors.find('editor');
-    const userMsgSel = CQ.selectors.SELECTORS.userMessage.join(',');
-    const candidates = CQ.selectors.SELECTORS.limitBanner.flatMap((sel) => {
+    const editor = GQ.selectors.find('editor');
+    const userMsgSel = GQ.selectors.SELECTORS.userMessage.join(',');
+    const candidates = GQ.selectors.SELECTORS.limitBanner.flatMap((sel) => {
       try {
         return Array.from(document.querySelectorAll(sel));
       } catch (_) {
@@ -203,11 +243,13 @@
 
   const WEEKDAYS_EN = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
   const WEEKDAYS_ZH = ['日', '一', '二', '三', '四', '五', '六'];
+  const MONTHS_EN = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
   /**
    * 從提示文字解析重置時間。支援：
-   *   "resets at 3:00 PM" / "until 11 PM" / "resets Monday 9:00 AM" / "in 2 hours"
-   *   "將於下午3:00重置" / "週一 上午 9:00" / "2 小時後" / "15:30"
+   *   "resets at 3:00 PM" / "until 5:17 PM" / "resets Monday 9:00 AM" / "in 2 hours"
+   *   "tomorrow at 3:00 PM" / "until Nov 25, 5:17 PM"
+   *   "下午1:07" / "12月1日下午1:07" / "明天下午 3:00" / "週一 上午 9:00" / "2 小時後" / "15:30"
    * 解析失敗時回傳「5 小時後」並標記 estimated=true。
    */
   function parseResetTimeFromText(text, now = Date.now()) {
@@ -222,6 +264,23 @@
     if (m) return { resetAt: now + (+m[1] * 60 + (+m[2] || 0)) * 60000, estimated: false };
     m = s.match(/(\d+)\s*分(?:鐘)?\s*後/);
     if (m) return { resetAt: now + +m[1] * 60000, estimated: false };
+
+    // 明確月日（例如 "Nov 25" / "12月1日"）與「明天 / tomorrow」
+    let explicitMonth = null;
+    let explicitDay = null;
+    const mdEn = s.match(
+      /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b/i
+    );
+    if (mdEn) {
+      explicitMonth = MONTHS_EN.indexOf(mdEn[1].toLowerCase());
+      explicitDay = +mdEn[2];
+    }
+    const mdZh = s.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日號]/);
+    if (mdZh) {
+      explicitMonth = +mdZh[1] - 1;
+      explicitDay = +mdZh[2];
+    }
+    const isTomorrow = /\btomorrow\b|明天|明日/i.test(s);
 
     // 星期
     let weekday = null;
@@ -265,7 +324,12 @@
     const d = new Date(now);
     d.setSeconds(0, 0);
     d.setHours(hour, minute);
-    if (weekday != null && weekday >= 0) {
+    if (explicitMonth != null && explicitDay != null && explicitMonth >= 0 && explicitMonth <= 11) {
+      d.setMonth(explicitMonth, explicitDay);
+      if (d.getTime() <= now) d.setFullYear(d.getFullYear() + 1);
+    } else if (isTomorrow) {
+      d.setDate(d.getDate() + 1);
+    } else if (weekday != null && weekday >= 0) {
       let diff = (weekday - d.getDay() + 7) % 7;
       if (diff === 0 && d.getTime() <= now) diff = 7;
       d.setDate(d.getDate() + diff);
@@ -278,7 +342,7 @@
   // ───────────────────────── Debug 模擬 ─────────────────────────
 
   function simulatedStatus(now = Date.now()) {
-    const st = CQ.settings.get();
+    const st = GQ.settings.get();
     if (!st.debugSimulate) return null;
     const full = now < st.debugSimulateUntil;
     return {
@@ -297,17 +361,6 @@
 
   // ───────────────────────── 組合 ─────────────────────────
 
-  /**
-   * UsageSnapshot:
-   * {
-   *   source: 'api'|'api+dom'|'dom'|'simulated'|'none',
-   *   full: true|false|null   (null = 無法判斷),
-   *   fullReasons: ('session'|'weekly'|'dom'|'simulated')[],
-   *   session/weekly: { pct, resetsAt } | null, extras: [],
-   *   resetAt: number|null    (若已滿：預計可再送出的時間),
-   *   estimated: boolean, fetchedAt, error
-   * }
-   */
   function buildSnapshot(api, dom, error, now = Date.now()) {
     const reasons = [];
     const resetCandidates = [];
@@ -316,7 +369,6 @@
     if (api) {
       for (const key of ['session', 'weekly']) {
         const b = api[key];
-        // 已滿但重置時間已經過了（工作階段結束後 API 可能還停在 100%）→ 不算擋住
         const expired = b && b.resetsAt && b.resetsAt <= now;
         if (b && b.pct != null && b.pct >= FULL_THRESHOLD && !expired) {
           reasons.push(key);
@@ -333,7 +385,6 @@
     const full = reasons.length ? true : api ? false : null;
     let resetAt = null;
     if (full) {
-      // 多個上限同時滿時，要等最晚的那個重置
       resetAt = resetCandidates.length ? Math.max(...resetCandidates) : null;
       if (!resetAt) {
         resetAt = now + TIMING.FALLBACK_RESET_MS;
@@ -341,8 +392,14 @@
       }
     }
 
+    let source;
+    if (api) source = dom && dom.limited ? 'api+dom' : 'api';
+    else if (dom && dom.limited) source = 'dom';
+    else if (!error) source = 'dom';
+    else source = 'none';
+
     return {
-      source: api ? (dom && dom.limited ? 'api+dom' : 'api') : dom && dom.limited ? 'dom' : 'none',
+      source,
       full,
       fullReasons: reasons,
       session: api ? api.session : null,
@@ -356,18 +413,54 @@
   }
 
   async function getStatus() {
-    const now = Date.now();
-    const sim = simulatedStatus(now);
+    const sim = simulatedStatus(Date.now());
     if (sim) return sim;
+
+    const href = typeof location !== 'undefined' ? location.href : '';
+    const onUsagePage = !!(GQ.text && GQ.text.isUsageUrl && GQ.text.isUsageUrl(href));
 
     let api = null;
     let error = null;
-    try {
-      api = await fetchUsageApi();
-    } catch (e) {
-      error = e.name === 'AbortError' ? 'timeout' : e.message;
-      log.warn('usage endpoint failed, falling back to DOM detection', { error });
+
+    if (onUsagePage) {
+      try {
+        api = await readUsagePageDom();
+      } catch (e) {
+        error = e.message || 'usage-page-error';
+        log.warn('failed to read /usage DOM', { error });
+      }
+      const snap = buildSnapshot(api, { limited: false }, error, Date.now());
+      log.debug('usage page status', {
+        source: snap.source,
+        session: snap.session && snap.session.pct,
+        weekly: snap.weekly && snap.weekly.pct
+      });
+      return snap;
     }
+
+    if (hasUsageProvider()) {
+      try {
+        api = await fetchUsageApi();
+      } catch (e) {
+        error = e.name === 'AbortError' ? 'timeout' : e.message;
+        log.warn('usage provider failed, falling back to DOM detection', { error });
+      }
+    } else if (GQ.bg && GQ.MSG && GQ.MSG.USAGE_FETCH_PAGE) {
+      try {
+        const res = await GQ.bg.send(GQ.MSG.USAGE_FETCH_PAGE, { url: href });
+        if (res && res.ok && res.api) {
+          api = res.api;
+        } else if (res && res.error) {
+          error = res.error;
+          log.warn('background /usage fetch failed, falling back to DOM detection', { error });
+        }
+      } catch (e) {
+        error = e.message;
+        log.warn('USAGE_FETCH_PAGE failed', { error });
+      }
+    }
+
+    const now = Date.now();
     const dom = detectLimitFromDom(now);
     const snap = buildSnapshot(api, dom, error, now);
     log.debug('usage status', {
@@ -382,11 +475,14 @@
     return snap;
   }
 
-  CQ.usage = {
-    ENDPOINTS,
+  GQ.usage = {
+    setUsageProvider,
+    hasUsageProvider,
     getStatus,
     fetchUsageApi,
     parseUsageResponse,
+    parseUsagePageText,
+    readUsagePageDom,
     detectLimitFromDom,
     parseResetTimeFromText,
     simulatedStatus,

@@ -4,7 +4,7 @@
  * 新增語系：複製 _locales/zh_TW/messages.json 到新資料夾並翻譯即可。
  */
 (function (root) {
-  const CQ = (root.CQ = root.CQ || {});
+  const GQ = (root.GQ = root.GQ || {});
 
   function t(key, subs) {
     let msg = '';
@@ -62,6 +62,6 @@
     return days > 0 ? t('countdownDays', { days, rest: core }) : core;
   }
 
-  CQ.i18n = { t, applyI18n, formatClock, formatCountdown };
-  CQ.t = t;
+  GQ.i18n = { t, applyI18n, formatClock, formatCountdown };
+  GQ.t = t;
 })(globalThis);

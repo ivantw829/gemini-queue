@@ -2,7 +2,7 @@
  * 重置後的還原流程：把佇列中的文字填回輸入框 → 顯示確認列 → 由你按下送出（或自動送出）。
  *
  * 只有 service worker 指定給「這個分頁」的項目才會還原（點通知 / popup 的「立即嘗試」/ 自動送出），
- * 不會因為你同時開著多個 claude.ai 分頁而在每個分頁都填入。
+ * 不會因為你同時開著多個 gemini.google.com 分頁而在每個分頁都填入。
  *
  * 自動送出的原則：寧可不送，也不送錯對話、不重複送。
  *   - 送出前（取得 claim 前、按下送出前）都會再確認目前就是原對話；不是就請 SW 重新開啟原對話
@@ -15,12 +15,12 @@
  *   - 有任何一個檔案加不回去 → 自動模式不送（重新整理後重試，仍失敗就通知）；手動模式可下載附件自己加
  */
 (function (root) {
-  const CQ = (root.CQ = root.CQ || {});
-  const log = CQ.logger.createLogger('restore');
-  const { MSG, TIMING, LIMITS } = CQ;
-  const t = CQ.t;
+  const GQ = (root.GQ = root.GQ || {});
+  const log = GQ.logger.createLogger('restore');
+  const { MSG, TIMING, LIMITS } = GQ;
+  const t = GQ.t;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const keyOf = (url) => CQ.text.conversationKey(url);
+  const keyOf = (url) => GQ.text.conversationKey(url);
 
   let running = false;
   /** 目前這次還原的狀態 */
@@ -29,7 +29,7 @@
   async function waitForEditor(timeoutMs = TIMING.COMPOSER_WAIT_MS) {
     const end = Date.now() + timeoutMs;
     while (Date.now() < end) {
-      const ed = CQ.editor.getEditor();
+      const ed = GQ.editor.getEditor();
       if (ed && ed.isConnected) return ed;
       await sleep(300);
     }
@@ -38,7 +38,7 @@
 
   async function bg(type, payload) {
     try {
-      return await CQ.bg.send(type, payload);
+      return await GQ.bg.send(type, payload);
     } catch (e) {
       log.warn(`${type} failed`, { error: e.message });
       return null;
@@ -61,7 +61,7 @@
       attempt: c.attempt
     });
     c.token = null;
-    CQ.ui.toast(t(res && res.ok ? 'toastRetryReload' : 'toastAutoSendGaveUp'), {
+    GQ.ui.toast(t(res && res.ok ? 'toastRetryReload' : 'toastAutoSendGaveUp'), {
       kind: res && res.ok ? 'info' : 'error'
     });
   }
@@ -71,7 +71,7 @@
     log.warn('not in original conversation, reopening', { id: c.item.id });
     const res = await bg(MSG.RESTORE_REOPEN, { id: c.item.id, token: c.token, mode: c.mode, attempt: c.attempt });
     c.token = null;
-    CQ.ui.toast(t(res && res.ok ? 'toastWrongConversation' : 'toastAutoSendGaveUp'), {
+    GQ.ui.toast(t(res && res.ok ? 'toastWrongConversation' : 'toastAutoSendGaveUp'), {
       kind: res && res.ok ? 'info' : 'error'
     });
   }
@@ -80,7 +80,7 @@
   async function giveUp(c, reason) {
     await bg(MSG.RESTORE_GIVE_UP, { id: c.item.id, token: c.token, reason });
     c.token = null;
-    CQ.ui.toast(t('toastAutoSendGaveUp'), { kind: 'error' });
+    GQ.ui.toast(t('toastAutoSendGaveUp'), { kind: 'error' });
   }
 
   function inTargetConversation(c) {
@@ -107,8 +107,8 @@
       await retry(c, 'stale-limit');
       return true;
     }
-    CQ.ui.toast(
-      t('toastStillFull', { time: CQ.i18n.formatClock(snap.resetAt) }) + (snap.estimated ? t('estimatedSuffix') : ''),
+    GQ.ui.toast(
+      t('toastStillFull', { time: GQ.i18n.formatClock(snap.resetAt) }) + (snap.estimated ? t('estimatedSuffix') : ''),
       { kind: 'warn' }
     );
     await release(c, 'waiting', { resetAt: snap.resetAt, resetEstimated: !!snap.estimated });
@@ -147,7 +147,7 @@
     runInner(c)
       .catch(async (e) => {
         log.error('restore error', e);
-        CQ.ui.toast(t('toastRestoreError'), { kind: 'error' });
+        GQ.ui.toast(t('toastRestoreError'), { kind: 'error' });
         if (c.mode === 'auto') await giveUp(c, 'generic');
         else if (c.token) await release(c, 'ready');
       })
@@ -168,7 +168,7 @@
     if (!inTargetConversation(c)) {
       log.warn('navigated away during restore', { id: c.item.id });
       c.navigated = true;
-      CQ.ui.hideBar('navigated');
+      GQ.ui.hideBar('navigated');
     }
   }
 
@@ -177,7 +177,7 @@
       await reopen(c);
     } else {
       await release(c, 'ready');
-      CQ.ui.toast(t('toastKeptInQueue'), { kind: 'info' });
+      GQ.ui.toast(t('toastKeptInQueue'), { kind: 'info' });
     }
   }
 
@@ -188,7 +188,7 @@
 
     const editor = await waitForEditor();
     if (!editor) {
-      CQ.selectors.reportMissing('editor');
+      GQ.selectors.reportMissing('editor');
       if (auto) await retry(c, 'editor-missing');
       else await release(c, 'ready');
       return 'stopped';
@@ -197,15 +197,15 @@
     // 不是原對話（分頁被切到別的對話、對話已刪除被導向 /new…）
     if (!inTargetConversation(c)) {
       log.warn('conversation url mismatch', {
-        expectedNew: CQ.text.isNewChatUrl(item.url),
-        expected: CQ.text.urlShape(item.url),
-        actual: CQ.text.urlShape(location.href)
+        expectedNew: GQ.text.isNewChatUrl(item.url),
+        expected: GQ.text.urlShape(item.url),
+        actual: GQ.text.urlShape(location.href)
       });
       if (auto) {
         await reopen(c);
         return 'stopped';
       }
-      const choice = await CQ.ui.showBar({
+      const choice = await GQ.ui.showBar({
         message: t('barConversationMissing'),
         buttons: [
           { id: 'here', label: t('btnSendHere'), kind: 'primary' },
@@ -220,26 +220,26 @@
     }
 
     // 確認額度真的恢復
-    const snap = await CQ.usageState.refresh({ timeout: TIMING.USAGE_FETCH_TIMEOUT_MS });
+    const snap = await GQ.usageState.refresh({ timeout: TIMING.USAGE_FETCH_TIMEOUT_MS });
     if (item.keepalive) {
       // 自動重設只看 API：頁面上殘留的上限提示不代表還不能送
       if (await keepaliveBlocked(c, snap)) return 'stopped';
-      CQ.ui.toast(t('toastKeepalive'), { kind: 'info', duration: 8000 });
+      GQ.ui.toast(t('toastKeepalive'), { kind: 'info', duration: 8000 });
     } else if (snap && snap.full === true) {
       await handleStillFull(c, snap);
       return 'stopped';
     }
 
     // 你可能已經手動送出過相同內容（自動重設的專用對話裡本來就有很多相同訊息，不檢查）
-    if (!item.keepalive && CQ.sender.findDuplicateInConversation(item.text)) {
+    if (!item.keepalive && GQ.sender.findDuplicateInConversation(item.text)) {
       if (auto) {
         // 不確定是不是已經送過 → 不自動送，交給你決定
         await giveUp(c, 'duplicate');
         return 'stopped';
       }
-      const choice = await CQ.ui.showBar({
+      const choice = await GQ.ui.showBar({
         message: t('barDuplicate'),
-        sub: CQ.text.preview(item.text),
+        sub: GQ.text.preview(item.text),
         buttons: [
           { id: 'markSent', label: t('btnMarkSent'), kind: 'primary' },
           { id: 'restore', label: t('btnRestoreAnyway') },
@@ -248,7 +248,7 @@
       });
       if (choice === 'markSent') {
         await bg(MSG.QUEUE_MARK_SENT_BY_TEXT, { id: item.id, by: 'duplicate-confirmed' });
-        CQ.ui.toast(t('toastMarkedSent'), { kind: 'success' });
+        GQ.ui.toast(t('toastMarkedSent'), { kind: 'success' });
         return 'stopped';
       }
       if (choice === 'navigated') {
@@ -262,14 +262,14 @@
     }
 
     // 輸入區已有附件（你的附件草稿，或之前加到一半的）
-    if (CQ.attachments.count() > 0) {
+    if (GQ.attachments.count() > 0) {
       const r = await handleExistingAttachments(c);
       if (r !== 'ok') return 'stopped';
     }
 
     // 輸入框已有其他內容
-    const existing = CQ.editor.getText(editor);
-    const alreadyFilled = existing && CQ.text.sameText(existing, item.text);
+    const existing = GQ.editor.getText(editor);
+    const alreadyFilled = existing && GQ.text.sameText(existing, item.text);
     if (existing && !alreadyFilled) {
       if (auto) {
         // 先把你的草稿存進佇列（標記為草稿，不會自動送出），確定存好才覆蓋
@@ -278,9 +278,9 @@
           await giveUp(c, 'draft-save-failed');
           return 'stopped';
         }
-        CQ.ui.toast(t('toastDraftSaved'), { kind: 'info', duration: 10000 });
+        GQ.ui.toast(t('toastDraftSaved'), { kind: 'info', duration: 10000 });
       } else {
-        const choice = await CQ.ui.showBar({
+        const choice = await GQ.ui.showBar({
           message: t('barEditorNotEmpty'),
           buttons: [
             { id: 'overwrite', label: t('btnOverwrite'), kind: 'danger' },
@@ -307,14 +307,14 @@
     }
 
     if (!alreadyFilled) {
-      const filled = await CQ.editor.fill(item.text, editor);
+      const filled = await GQ.editor.fill(item.text, editor);
       if (!filled.ok) {
         log.error('fill failed with all methods', { id: item.id });
         if (auto) {
           await retry(c, 'fill-failed');
           return 'stopped';
         }
-        await CQ.ui.showBar({
+        await GQ.ui.showBar({
           message: t('barFillFailed'),
           buttons: [
             {
@@ -325,8 +325,8 @@
               onClick: () =>
                 navigator.clipboard
                   .writeText(item.text)
-                  .then(() => CQ.ui.toast(t('toastCopied'), { kind: 'success' }))
-                  .catch(() => CQ.ui.toast(t('toastCopyFailed'), { kind: 'error' }))
+                  .then(() => GQ.ui.toast(t('toastCopied'), { kind: 'success' }))
+                  .catch(() => GQ.ui.toast(t('toastCopyFailed'), { kind: 'error' }))
             },
             { id: 'keep', label: t('btnClose') }
           ]
@@ -339,9 +339,9 @@
     let choice = c.navigated ? 'navigated' : 'manual';
     if (auto && choice !== 'navigated') choice = await autoCountdown();
     if (choice === 'manual' || choice === 'cancelAuto') {
-      choice = await CQ.ui.showBar({
+      choice = await GQ.ui.showBar({
         message: t('barRestored'),
-        sub: CQ.text.preview(item.text) + filesSuffix(item),
+        sub: GQ.text.preview(item.text) + filesSuffix(item),
         buttons: [
           { id: 'send', label: t('btnSend'), kind: 'primary' },
           { id: 'cancel', label: t('btnCancel'), kind: 'danger' },
@@ -359,13 +359,13 @@
       await handleNavigatedAway(c);
     } else if (choice === 'cancel') {
       await bg(MSG.QUEUE_DELETE, { id: item.id });
-      CQ.ui.toast(t('toastCancelled'), { kind: 'info' });
+      GQ.ui.toast(t('toastCancelled'), { kind: 'info' });
     } else if (choice === 'keep') {
-      await CQ.editor.clear();
+      await GQ.editor.clear();
       // 只在輸入區原本沒有你的附件時才移除（不動你自己加的）
-      if ((item.attachments || []).length && !c.preexisting) await CQ.attachments.removeAll();
+      if ((item.attachments || []).length && !c.preexisting) await GQ.attachments.removeAll();
       await release(c, 'ready');
-      CQ.ui.toast(t('toastKeptInQueue'), { kind: 'info' });
+      GQ.ui.toast(t('toastKeptInQueue'), { kind: 'info' });
     } else {
       // 'gone'（項目在別處被處理掉）或 'dismissed'
       log.info('restore bar closed', { choice });
@@ -379,18 +379,18 @@
   function autoCountdown() {
     const deadline = Date.now() + TIMING.AUTO_SEND_COUNTDOWN_S * 1000;
     const secondsLeft = () => Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-    const p = CQ.ui.showBar({
+    const p = GQ.ui.showBar({
       message: t('barAutoSendCountdown', { seconds: secondsLeft() }),
       buttons: [
         { id: 'send', label: t('btnSendNow'), kind: 'primary' },
         { id: 'cancelAuto', label: t('btnCancelAutoSend') }
       ]
     });
-    const finish = () => CQ.ui.hideBar('send');
+    const finish = () => GQ.ui.hideBar('send');
     const endTimer = setTimeout(finish, Math.max(0, deadline - Date.now()));
     const tick = setInterval(() => {
       if (Date.now() >= deadline) finish();
-      else CQ.ui.updateBar(t('barAutoSendCountdown', { seconds: secondsLeft() }));
+      else GQ.ui.updateBar(t('barAutoSendCountdown', { seconds: secondsLeft() }));
     }, 250);
     return p.finally(() => {
       clearTimeout(endTimer);
@@ -400,18 +400,18 @@
 
   /** 送出前再查一次用量。回傳 true 代表可以送出；false 代表已處理（打回佇列或重試） */
   async function usageAllowsSend(c) {
-    const fresh = await CQ.usageState.refresh({ timeout: TIMING.PRE_SEND_RECHECK_TIMEOUT_MS });
-    const snap = fresh || CQ.usageState.current();
-    if (c.item.keepalive && CQ.session.hasApiData(snap)) return !(await keepaliveBlocked(c, snap));
+    const fresh = await GQ.usageState.refresh({ timeout: TIMING.PRE_SEND_RECHECK_TIMEOUT_MS });
+    const snap = fresh || GQ.usageState.current();
+    if (c.item.keepalive && GQ.session.hasApiData(snap)) return !(await keepaliveBlocked(c, snap));
     if (snap && snap.full === true && (!snap.resetAt || snap.resetAt > Date.now() || isStaleDomOnly(snap))) {
       await handleStillFull(c, snap);
       return false;
     }
-    if (!snap && CQ.interceptor.decideSync().block) {
+    if (!snap && GQ.interceptor.decideSync().block) {
       // 完全查不到用量時才退回頁面判斷
-      const cur = CQ.interceptor.decideSync();
+      const cur = GQ.interceptor.decideSync();
       await release(c, 'waiting', { resetAt: cur.resetAt, resetEstimated: !!cur.estimated });
-      CQ.ui.toast(t('toastStillFull', { time: CQ.i18n.formatClock(cur.resetAt) }), { kind: 'warn' });
+      GQ.ui.toast(t('toastStillFull', { time: GQ.i18n.formatClock(cur.resetAt) }), { kind: 'warn' });
       return false;
     }
     return true;
@@ -430,7 +430,7 @@
     const claim = await bg(MSG.QUEUE_CLAIM, { id: item.id });
     if (!claim || !claim.ok) {
       log.warn('claim rejected', { id: item.id, reason: claim && claim.reason });
-      CQ.ui.toast(t(claim && claim.reason === 'not-found' ? 'toastAlreadyHandled' : 'toastClaimRejected'), {
+      GQ.ui.toast(t(claim && claim.reason === 'not-found' ? 'toastAlreadyHandled' : 'toastClaimRejected'), {
         kind: 'warn'
       });
       return 'stopped';
@@ -441,19 +441,19 @@
     if (!(await usageAllowsSend(c))) return 'stopped';
 
     // 4. 輸入框內容：自動模式下若被清空或改變，重新填入
-    let textNow = CQ.editor.getText();
-    if (c.mode === 'auto' && !CQ.text.sameText(textNow, item.text)) {
+    let textNow = GQ.editor.getText();
+    if (c.mode === 'auto' && !GQ.text.sameText(textNow, item.text)) {
       log.warn('editor content changed before auto send, refilling', { got: textNow.length });
-      const filled = await CQ.editor.fill(item.text);
+      const filled = await GQ.editor.fill(item.text);
       if (!filled.ok) {
         await retry(c, 'fill-failed');
         return 'stopped';
       }
-      textNow = CQ.editor.getText();
+      textNow = GQ.editor.getText();
     }
     if (!textNow) {
       await release(c, 'ready');
-      CQ.ui.toast(t('toastEditorEmpty'), { kind: 'warn' });
+      GQ.ui.toast(t('toastEditorEmpty'), { kind: 'warn' });
       return 'stopped';
     }
 
@@ -467,17 +467,17 @@
     }
 
     c.phase = 'sending';
-    const r = await CQ.sender.clickSendAndConfirm(textNow);
+    const r = await GQ.sender.clickSendAndConfirm(textNow);
     if (r.ok) {
       await bg(MSG.QUEUE_MARK_SENT, {
         id: item.id,
         token: c.token,
         confidence: r.confidence,
-        edited: !CQ.text.sameText(textNow, item.text)
+        edited: !GQ.text.sameText(textNow, item.text)
       });
       c.token = null;
       log.info('queued message sent', { id: item.id, confidence: r.confidence });
-      CQ.ui.toast(t(r.confidence === 'weak' ? 'toastSentWeak' : 'toastSent'), { kind: 'success' });
+      GQ.ui.toast(t(r.confidence === 'weak' ? 'toastSentWeak' : 'toastSent'), { kind: 'success' });
       await rebindNewChatGroup(c);
       await bindKeepaliveConversation(c);
       return 'sent';
@@ -491,7 +491,7 @@
     }
     await bg(MSG.QUEUE_MARK_FAILED, { id: item.id, token: c.token, error: r.error });
     c.token = null;
-    CQ.ui.toast(t('toastSendFailed'), { kind: 'error' });
+    GQ.ui.toast(t('toastSendFailed'), { kind: 'error' });
     return 'stopped';
   }
 
@@ -510,7 +510,7 @@
       return 'stopped';
     }
     for (;;) {
-      const choice = await CQ.ui.showBar({
+      const choice = await GQ.ui.showBar({
         message: t('barComposerHasAttachments'),
         buttons: [
           { id: 'recheck', label: t('btnRecheckAttachments'), kind: 'primary' },
@@ -519,11 +519,11 @@
         ]
       });
       if (choice === 'recheck') {
-        if (CQ.attachments.count() === 0) return 'ok';
+        if (GQ.attachments.count() === 0) return 'ok';
         continue;
       }
       if (choice === 'together') {
-        c.preexisting = CQ.attachments.count();
+        c.preexisting = GQ.attachments.count();
         return 'ok';
       }
       if (choice === 'navigated') await handleNavigatedAway(c);
@@ -536,18 +536,18 @@
   async function restoreAttachments(c) {
     const { item } = c;
     const auto = c.mode === 'auto';
-    const base = CQ.attachments.count();
+    const base = GQ.attachments.count();
 
-    const loaded = await CQ.attachments.load(item);
+    const loaded = await GQ.attachments.load(item);
     if (!loaded.ok) {
       log.error('attachments missing from storage', { id: item.id });
       if (auto) {
         await giveUp(c, 'attachments-missing');
         return 'stopped';
       }
-      const choice = await CQ.ui.showBar({
+      const choice = await GQ.ui.showBar({
         message: t('barAttachmentsMissing'),
-        sub: CQ.text.preview(item.text),
+        sub: GQ.text.preview(item.text),
         buttons: [
           { id: 'textOnly', label: t('btnSendTextOnly'), kind: 'primary' },
           { id: 'keep', label: t('btnKeepInQueue') }
@@ -559,8 +559,8 @@
       return 'stopped';
     }
 
-    CQ.ui.toast(t('toastAttaching', { count: loaded.files.length }), { kind: 'info' });
-    const res = await CQ.attachments.attach(loaded.files);
+    GQ.ui.toast(t('toastAttaching', { count: loaded.files.length }), { kind: 'info' });
+    const res = await GQ.attachments.attach(loaded.files);
     if (c.navigated) {
       await handleNavigatedAway(c);
       return 'stopped';
@@ -575,7 +575,7 @@
       await retry(c, 'attach-failed');
       return 'stopped';
     }
-    const choice = await CQ.ui.showBar({
+    const choice = await GQ.ui.showBar({
       message: t('barAttachFailed'),
       sub: loaded.files.map((f) => f.name).join('、'),
       buttons: [
@@ -583,7 +583,7 @@
           id: 'download',
           label: t('btnDownloadAttachments'),
           keepOpen: true,
-          onClick: () => CQ.attachments.download(loaded.files)
+          onClick: () => GQ.attachments.download(loaded.files)
         },
         { id: 'continue', label: t('btnAttachedManually'), kind: 'primary' },
         { id: 'keep', label: t('btnKeepInQueue') }
@@ -595,7 +595,7 @@
       return 'stopped';
     }
     if (choice !== 'gone') {
-      if (!base) await CQ.attachments.removeAll();
+      if (!base) await GQ.attachments.removeAll();
       await release(c, 'ready');
     }
     return 'stopped';
@@ -604,9 +604,9 @@
   /** 送出前的附件檢查。回傳 true 代表可以送出 */
   async function attachmentsAllowSend(c) {
     const end = Date.now() + TIMING.ATTACH_UPLOAD_WAIT_MS;
-    while (CQ.attachments.uploading() && Date.now() < end) await sleep(300);
-    const stillUploading = CQ.attachments.uploading();
-    const missing = c.expectedFiles != null && CQ.attachments.count() < c.expectedFiles;
+    while (GQ.attachments.uploading() && Date.now() < end) await sleep(300);
+    const stillUploading = GQ.attachments.uploading();
+    const missing = c.expectedFiles != null && GQ.attachments.count() < c.expectedFiles;
     if (!stillUploading && !(c.mode === 'auto' && missing)) return true;
 
     log.warn('attachments not ready at send', { id: c.item.id, stillUploading, missing });
@@ -614,7 +614,7 @@
       await retry(c, 'attach-failed');
     } else {
       await release(c, 'ready');
-      CQ.ui.toast(t('toastAttachmentsNotReady'), { kind: 'warn', duration: 8000 });
+      GQ.ui.toast(t('toastAttachmentsNotReady'), { kind: 'warn', duration: 8000 });
     }
     return false;
   }
@@ -622,8 +622,8 @@
   /** 新對話群組的第一則送出後，把其餘項目改指向剛建立的對話（依序送進同一個對話） */
   async function rebindNewChatGroup(c) {
     const { item } = c;
-    if (!item.newChatGroup || !CQ.text.isNewChatUrl(item.url)) return;
-    const url = await CQ.sender.waitForConversationUrl();
+    if (!item.newChatGroup || !GQ.text.isNewChatUrl(item.url)) return;
+    const url = await GQ.sender.waitForConversationUrl();
     log.info('new chat url for group', { found: !!url });
     await bg(MSG.QUEUE_REBIND, { group: item.newChatGroup, url });
   }
@@ -635,7 +635,7 @@
    *  - 讀不到 API → 退回頁面判斷：頁面明確顯示已滿就不送
    */
   async function keepaliveBlocked(c, snap) {
-    const check = CQ.session.keepaliveCheck(snap, {});
+    const check = GQ.session.keepaliveCheck(snap, {});
     if (check.result === 'session-active') {
       log.info('keepalive skipped: session already active');
       await bg(MSG.QUEUE_DELETE, { id: c.item.id });
@@ -654,29 +654,29 @@
   }
 
   /**
-   * 自動重設送出前，把專用對話的模型切到設定值（預設 Haiku／中）。
-   * 在新對話（/new）切換會改到你的全域預設模型，所以不切：第一則用目前模型送出，
+   * 自動重設送出前，把專用對話的模型切到設定值（預設 Flash-Lite）。
+   * 在新對話（/app）切換會改到你的全域預設模型，所以不切：第一則用目前模型送出，
    * 之後專用對話建立了，下一次就會在對話裡切換（只影響這個對話）。
    * 切換失敗不中止，照樣用目前模型送出。
    */
   async function switchKeepaliveModel() {
-    const s = CQ.settings.get();
+    const s = GQ.settings.get();
     if (s.autoResetModel === 'none' && s.autoResetEffort === 'none') return;
     let res;
-    if (CQ.text.isNewChatUrl(location.href)) {
+    if (GQ.text.isNewChatUrl(location.href)) {
       res = { ok: false, changed: false, reason: 'new-chat' };
     } else {
-      res = await CQ.model.ensure({ model: s.autoResetModel, effort: s.autoResetEffort });
+      res = await GQ.model.ensure({ model: s.autoResetModel, effort: s.autoResetEffort });
     }
     log.info('keepalive model', { ok: res.ok, changed: res.changed, reason: res.reason || null });
-    await bg(MSG.KEEPALIVE_MODEL_RESULT, { ok: res.ok, reason: res.reason || null, model: CQ.model.label() });
+    await bg(MSG.KEEPALIVE_MODEL_RESULT, { ok: res.ok, reason: res.reason || null, model: GQ.model.label() });
   }
 
   /** 自動重設第一次在新對話送出 → 回報建立的對話網址，之後都送進這個專用對話 */
   async function bindKeepaliveConversation(c) {
     const { item } = c;
-    if (!item.keepalive || !CQ.text.isNewChatUrl(item.url)) return;
-    const url = await CQ.sender.waitForConversationUrl();
+    if (!item.keepalive || !GQ.text.isNewChatUrl(item.url)) return;
+    const url = await GQ.sender.waitForConversationUrl();
     log.info('keepalive conversation url', { found: !!url });
     if (url) await bg(MSG.KEEPALIVE_BOUND, { url });
   }
@@ -686,8 +686,8 @@
     try {
       const res = await bg(MSG.RESTORE_NEXT, { url: location.href, peek: true });
       if (res && res.item) {
-        CQ.ui.toast(t('toastWaitingForResponse'), { kind: 'info' });
-        await CQ.sender.waitForGenerationDone();
+        GQ.ui.toast(t('toastWaitingForResponse'), { kind: 'info' });
+        await GQ.sender.waitForGenerationDone();
         const next = await bg(MSG.RESTORE_NEXT, { url: location.href });
         if (next && next.item && start(next.item, next.mode || c.mode)) return;
       }
@@ -701,5 +701,5 @@
     return ctx ? ctx.item.id : null;
   }
 
-  CQ.restore = { check, start, run: start, onNavigate, getCurrentId };
+  GQ.restore = { check, start, run: start, onNavigate, getCurrentId };
 })(globalThis);

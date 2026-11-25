@@ -13,9 +13,9 @@
  * 讀取時原樣交回，由 content script 還原成 File。
  */
 (function (root) {
-  const CQ = (root.CQ = root.CQ || {});
+  const GQ = (root.GQ = root.GQ || {});
 
-  const DB_NAME = 'cq-files';
+  const DB_NAME = 'gq-files';
   const STORE = 'files';
   const STAGE_TTL_MS = 60 * 60 * 1000; // 暫存超過 1 小時沒被連結就刪除
 
@@ -102,7 +102,7 @@
   let backend = typeof indexedDB === 'undefined' ? memoryBackend() : idbBackend();
 
   function newId() {
-    return CQ.text && CQ.text.uuid ? CQ.text.uuid() : Math.random().toString(36).slice(2) + Date.now().toString(36);
+    return GQ.text && GQ.text.uuid ? GQ.text.uuid() : Math.random().toString(36).slice(2) + Date.now().toString(36);
   }
 
   /** 存一個暫存檔案，回傳 id */
@@ -158,7 +158,7 @@
     await backend.clear();
   }
 
-  CQ.fileStore = {
+  GQ.fileStore = {
     stage,
     link,
     get,

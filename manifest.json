@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "short_name": "Claude Queue",
+  "short_name": "Gemini Queue",
   "description": "__MSG_extDescription__",
-  "version": "0.4.0",
+  "version": "0.1.0",
   "default_locale": "zh_TW",
   "minimum_chrome_version": "116",
   "icons": {
@@ -13,12 +13,12 @@
     "128": "icons/icon128.png"
   },
   "permissions": ["storage", "alarms", "notifications"],
-  "host_permissions": ["https://claude.ai/*"],
+  "host_permissions": ["https://gemini.google.com/*"],
   "background": {
     "service_worker": "src/background/service-worker.js"
   },
   "action": {
-    "default_title": "Claude Queue",
+    "default_title": "Gemini Queue",
     "default_popup": "src/popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
@@ -32,7 +32,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://claude.ai/*"],
+      "matches": ["https://gemini.google.com/*"],
       "run_at": "document_idle",
       "all_frames": false,
       "js": [

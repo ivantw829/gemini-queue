@@ -130,7 +130,7 @@ function createEnv({
     filename: 'service-worker.js'
   });
 
-  const MSG = ctx.CQ.MSG;
+  const MSG = ctx.GQ.MSG;
   function send(msg, tabId = 1) {
     return new Promise((resolve) => {
       const handled = listeners.message[0](msg, { id: 'ext', tab: tabId == null ? undefined : { id: tabId } }, resolve);
@@ -138,7 +138,7 @@ function createEnv({
     });
   }
   const settle = () => new Promise((r) => setTimeout(r, 30));
-  const files = ctx.CQ.fileStore._backend()._map;
+  const files = ctx.GQ.fileStore._backend()._map;
   return { chrome, store, calls, listeners, send, MSG, settle, tabs, ctx, files };
 }
 

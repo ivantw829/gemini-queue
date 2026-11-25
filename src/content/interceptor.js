@@ -9,14 +9,14 @@
  *      - 仍然已滿 → 存入佇列，確認存檔成功後才清空輸入框
  *   3. 用量未滿 → 完全不干涉
  *
- * 附件：輸入區有附件時，用 CQ.attachments.collect() 取得你加入的檔案，連同文字一起排隊。
+ * 附件：輸入區有附件時，用 GQ.attachments.collect() 取得你加入的檔案，連同文字一起排隊。
  * 對不上（例如 Google Drive 附件）或超過大小限制 → 照原本行為放行並提示。沒有文字只有附件 → 不排隊。
  */
 (function (root) {
-  const CQ = (root.CQ = root.CQ || {});
-  const log = CQ.logger.createLogger('interceptor');
-  const { MSG, TIMING, STATUS } = CQ;
-  const t = CQ.t;
+  const GQ = (root.GQ = root.GQ || {});
+  const log = GQ.logger.createLogger('interceptor');
+  const { MSG, TIMING, STATUS } = GQ;
+  const t = GQ.t;
 
   let allowUntil = 0;
   let handling = false;
@@ -28,8 +28,8 @@
   }
 
   function currentNewChatGroup() {
-    if (!CQ.text.isNewChatUrl(location.href)) return null;
-    if (!newChatGroup) newChatGroup = CQ.text.uuid();
+    if (!GQ.text.isNewChatUrl(location.href)) return null;
+    if (!newChatGroup) newChatGroup = GQ.text.uuid();
     return newChatGroup;
   }
 
@@ -45,14 +45,14 @@
 
   /** 同步判斷：目前是否應攔截 */
   function decideSync(now = Date.now()) {
-    const sim = CQ.usage.simulatedStatus(now);
+    const sim = GQ.usage.simulatedStatus(now);
     if (sim) return sim.full ? { block: true, ...pickReset(sim) } : { block: false };
 
-    const dom = CQ.usage.detectLimitFromDom(now);
+    const dom = GQ.usage.detectLimitFromDom(now);
     if (dom.limited) {
       return { block: true, resetAt: dom.resetAt, estimated: dom.estimated, reasons: ['dom'] };
     }
-    const snap = CQ.usageState.current();
+    const snap = GQ.usageState.current();
     if (snap && snap.full === true && (!snap.resetAt || snap.resetAt > now)) {
       return { block: true, ...pickReset(snap) };
     }
@@ -66,22 +66,22 @@
   function onKeydown(e) {
     if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return;
     if (!e.isTrusted) return;
-    if (!CQ.selectors.closestEditor(e.target)) return;
+    if (!GQ.selectors.closestEditor(e.target)) return;
     handleSendAttempt(e, 'enter');
   }
 
   function onClick(e) {
     if (!e.isTrusted) return;
-    const btn = CQ.selectors.closestSendButton(e.target);
+    const btn = GQ.selectors.closestSendButton(e.target);
     if (!btn) return;
     handleSendAttempt(e, 'click');
   }
 
-  // 用量已滿時 claude.ai 可能把送出按鈕設為 disabled，disabled 按鈕不會觸發 click，
+  // 用量已滿時 gemini.google.com 可能把送出按鈕設為 disabled，disabled 按鈕不會觸發 click，
   // 所以在 pointerdown 階段處理「disabled 的送出按鈕」
   function onPointerDown(e) {
     if (!e.isTrusted || e.button !== 0) return;
-    const btn = CQ.selectors.closestSendButton(e.target);
+    const btn = GQ.selectors.closestSendButton(e.target);
     if (!btn || !(btn.disabled || btn.getAttribute('aria-disabled') === 'true')) return;
     handleSendAttempt(e, 'pointerdown-disabled');
   }
@@ -93,7 +93,7 @@
       return;
     }
     const decision = decideSync();
-    const text = CQ.editor.getText();
+    const text = GQ.editor.getText();
 
     if (!decision.block) {
       if (text) trackManualSend(text);
@@ -102,13 +102,13 @@
     if (!text) return; // 沒有文字可保存，維持原本行為
 
     let files = [];
-    if (CQ.editor.hasAttachments()) {
-      const got = CQ.attachments.collect();
+    if (GQ.editor.hasAttachments()) {
+      const got = GQ.attachments.collect();
       // 看得到附件卻一張卡片都數不到（選擇器對不上）→ 也當作無法保存，不排一則少了附件的訊息
       if (got.ok && !got.files.length) Object.assign(got, { ok: false, reason: 'untracked' });
       if (!got.ok) {
         log.info('attachments not queueable, letting through', { via, reason: got.reason });
-        CQ.ui.toast(t(ATTACH_REASON_TOAST[got.reason] || 'toastHasAttachment'), { kind: 'warn', duration: 8000 });
+        GQ.ui.toast(t(ATTACH_REASON_TOAST[got.reason] || 'toastHasAttachment'), { kind: 'warn', duration: 8000 });
         return; // 放行原本行為
       }
       files = got.files;
@@ -125,7 +125,7 @@
     queueMessage(text, decision, files)
       .catch((err) => {
         log.error('queue message failed', err);
-        CQ.ui.toast(t('toastSaveFailed'), { kind: 'error' });
+        GQ.ui.toast(t('toastSaveFailed'), { kind: 'error' });
       })
       .finally(() => {
         handling = false;
@@ -141,10 +141,10 @@
 
   async function queueMessage(text, decision, files = []) {
     // 送出前再查一次
-    const fresh = await CQ.usageState.refresh({ timeout: TIMING.PRE_SEND_RECHECK_TIMEOUT_MS });
+    const fresh = await GQ.usageState.refresh({ timeout: TIMING.PRE_SEND_RECHECK_TIMEOUT_MS });
     if (fresh && fresh.full === false) {
       log.info('usage recovered on re-check, not queueing');
-      CQ.ui.toast(t('toastUsageRecovered'), { kind: 'success' });
+      GQ.ui.toast(t('toastUsageRecovered'), { kind: 'success' });
       return;
     }
     const d = fresh && fresh.full === true ? { ...pickReset(fresh) } : decision;
@@ -158,10 +158,10 @@
     // 附件先交給 SW 暫存（失敗就不排隊，輸入框與附件都保持原樣）
     let stageIds = [];
     if (files.length) {
-      const staged = await CQ.attachments.stageAll(files);
+      const staged = await GQ.attachments.stageAll(files);
       if (staged.error) {
         log.warn('stage attachments failed', { error: staged.error });
-        CQ.ui.toast(t(STAGE_ERROR_TOAST[staged.error] || 'toastAttachmentSaveFailed'), {
+        GQ.ui.toast(t(STAGE_ERROR_TOAST[staged.error] || 'toastAttachmentSaveFailed'), {
           kind: 'error',
           duration: 8000
         });
@@ -170,7 +170,7 @@
       stageIds = staged.ids;
     }
 
-    const res = await CQ.bg.send(MSG.QUEUE_ADD, {
+    const res = await GQ.bg.send(MSG.QUEUE_ADD, {
       item: {
         text,
         url: location.href,
@@ -182,25 +182,25 @@
       }
     });
     if (!res || !res.ok || !res.item) {
-      CQ.ui.toast(t('toastSaveFailed'), { kind: 'error' });
+      GQ.ui.toast(t('toastSaveFailed'), { kind: 'error' });
       return;
     }
 
     // 已確認存檔成功，才清空輸入框；若等待期間內容被改過，就不清空
-    if (CQ.text.sameText(CQ.editor.getText(), text)) {
-      const cleared = await CQ.editor.clear();
-      if (!cleared) CQ.ui.toast(t('toastClearFailed'), { kind: 'warn' });
+    if (GQ.text.sameText(GQ.editor.getText(), text)) {
+      const cleared = await GQ.editor.clear();
+      if (!cleared) GQ.ui.toast(t('toastClearFailed'), { kind: 'warn' });
     } else {
-      CQ.ui.toast(t('toastEditorChangedNotCleared'), { kind: 'warn' });
+      GQ.ui.toast(t('toastEditorChangedNotCleared'), { kind: 'warn' });
     }
     // 附件也移除（等待期間附件數被改過就不動）
     if (files.length) {
-      const removed = CQ.attachments.count() === files.length && (await CQ.attachments.removeAll());
-      if (!removed) CQ.ui.toast(t('toastAttachmentsNotRemoved'), { kind: 'warn', duration: 8000 });
+      const removed = GQ.attachments.count() === files.length && (await GQ.attachments.removeAll());
+      if (!removed) GQ.ui.toast(t('toastAttachmentsNotRemoved'), { kind: 'warn', duration: 8000 });
     }
 
-    const clock = CQ.i18n.formatClock(res.item.resetAt);
-    CQ.ui.toast(
+    const clock = GQ.i18n.formatClock(res.item.resetAt);
+    GQ.ui.toast(
       (files.length
         ? t('toastQueuedWithFiles', { time: clock, count: files.length })
         : t('toastQueued', { time: clock })) + (res.item.resetEstimated ? t('estimatedSuffix') : ''),
@@ -210,30 +210,30 @@
 
   /** 你在額度可用時手動送出了與佇列中相同的內容 → 確認送出後將該項目標記為已送出 */
   function trackManualSend(text) {
-    const key = CQ.text.conversationKey(location.href);
-    const match = CQ.queueCache
+    const key = GQ.text.conversationKey(location.href);
+    const match = GQ.queueCache
       .get()
       .find(
         (it) =>
           it.status !== STATUS.SENT &&
           !it.claim &&
-          CQ.text.conversationKey(it.url) === key &&
-          CQ.text.sameText(it.text, text)
+          GQ.text.conversationKey(it.url) === key &&
+          GQ.text.sameText(it.text, text)
       );
     if (!match) return;
-    const before = CQ.sender.snapshotMessages();
-    CQ.sender.detectSent(text, before).then((r) => {
+    const before = GQ.sender.snapshotMessages();
+    GQ.sender.detectSent(text, before).then((r) => {
       if (!r.ok) return;
       log.info('manual send of queued text detected', { id: match.id });
-      CQ.bg
+      GQ.bg
         .send(MSG.QUEUE_MARK_SENT_BY_TEXT, { id: match.id, by: 'manual' })
-        .then(() => CQ.ui.toast(t('toastManualSendDetected'), { kind: 'success' }))
+        .then(() => GQ.ui.toast(t('toastManualSendDetected'), { kind: 'success' }))
         .catch(() => {});
     });
   }
 
   function install() {
-    // capture 階段掛在 window：會在 claude.ai（React 掛在 root）處理之前執行
+    // capture 階段掛在 window：會在 gemini.google.com（Angular 元件）處理之前執行
     window.addEventListener('keydown', onKeydown, true);
     window.addEventListener('pointerdown', onPointerDown, true);
     window.addEventListener('click', onClick, true);
@@ -241,5 +241,5 @@
   }
 
   // _handleSendAttempt：測試頁用（合成的鍵盤事件不是 isTrusted）
-  CQ.interceptor = { install, allowNextSend, decideSync, onNavigate, _handleSendAttempt: handleSendAttempt };
+  GQ.interceptor = { install, allowNextSend, decideSync, onNavigate, _handleSendAttempt: handleSendAttempt };
 })(globalThis);

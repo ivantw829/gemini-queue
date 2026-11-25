@@ -114,7 +114,7 @@ function createEnv({ tabs = [], autoSend = true, contentReply = { ok: true } } =
     filename: 'service-worker.js'
   });
 
-  const MSG = ctx.CQ.MSG;
+  const MSG = ctx.GQ.MSG;
   function send(msg, tabId = 1) {
     return new Promise((resolve) => {
       const handled = listeners.message[0](msg, { id: 'ext', tab: tabId == null ? undefined : { id: tabId } }, resolve);
@@ -129,7 +129,7 @@ function item(over = {}) {
   return {
     id: over.id || 'i' + Math.random().toString(36).slice(2, 8),
     text: 'hello',
-    url: 'https://claude.ai/chat/aaa',
+    url: 'https://gemini.google.com/app/aaa',
     createdAt: over.createdAt || Date.now(),
     resetAt: Date.now() - 1000,
     status: 'ready',
@@ -140,7 +140,7 @@ function item(over = {}) {
 
 test('busy tab keeps pendingRestore so the item is picked up later', async () => {
   const env = createEnv({
-    tabs: [{ id: 1, url: 'https://claude.ai/chat/aaa', windowId: 1 }],
+    tabs: [{ id: 1, url: 'https://gemini.google.com/app/aaa', windowId: 1 }],
     contentReply: { ok: false, busy: true }
   });
   await env.settle();
@@ -155,7 +155,7 @@ test('busy tab keeps pendingRestore so the item is picked up later', async () =>
 });
 
 test('accepted RESTORE_START clears pendingRestore and marks item as restoring', async () => {
-  const env = createEnv({ tabs: [{ id: 1, url: 'https://claude.ai/chat/aaa', windowId: 1 }] });
+  const env = createEnv({ tabs: [{ id: 1, url: 'https://gemini.google.com/app/aaa', windowId: 1 }] });
   await env.settle();
   env.store.queue = [item({ id: 'a' })];
   await env.send({ type: env.MSG.QUEUE_TRY_NOW, id: 'a' }, null);
@@ -186,7 +186,7 @@ test('RESTORE_RETRY reloads the tab, carries retry count, and gives up with a no
   assert.equal(r.ok, false);
   assert.equal(env.store.queue[0].status, 'failed');
   assert.equal(env.store.queue[0].lastError, 'not-sent');
-  const n = env.calls.notified.find((x) => x.id === 'cq-auto-failed:a');
+  const n = env.calls.notified.find((x) => x.id === 'gq-auto-failed:a');
   assert.ok(n, 'failure notification sent');
   assert.match(n.message, /按下送出後沒有反應/);
 });
@@ -202,13 +202,13 @@ test('RESTORE_RETRY refuses when another tab holds the claim', async () => {
 });
 
 test('RESTORE_REOPEN opens the correct conversation once, then gives up (never sends elsewhere)', async () => {
-  const env = createEnv({ tabs: [{ id: 1, url: 'https://claude.ai/chat/other', windowId: 1 }] });
+  const env = createEnv({ tabs: [{ id: 1, url: 'https://gemini.google.com/app/other', windowId: 1 }] });
   await env.settle();
-  env.store.queue = [item({ id: 'a', url: 'https://claude.ai/chat/aaa' })];
+  env.store.queue = [item({ id: 'a', url: 'https://gemini.google.com/app/aaa' })];
   let r = await env.send({ type: env.MSG.RESTORE_REOPEN, id: 'a', mode: 'auto', attempt: {} }, 1);
   assert.equal(r.ok, true);
   assert.equal(env.calls.created.length, 1);
-  assert.equal(env.calls.created[0].url, 'https://claude.ai/chat/aaa', 'opened original chat, not tab 1');
+  assert.equal(env.calls.created[0].url, 'https://gemini.google.com/app/aaa', 'opened original chat, not tab 1');
   assert.equal(env.store.pendingRestore.reopened, 1);
 
   r = await env.send({ type: env.MSG.RESTORE_REOPEN, id: 'a', mode: 'auto', attempt: { reopened: 1 } }, 100);
@@ -222,12 +222,12 @@ test('drafts are never auto-opened; RESTORE_DONE moves on to the next conversati
   await env.settle();
   const now = Date.now();
   env.store.queue = [
-    item({ id: 'draft', draft: true, createdAt: now - 3000, url: 'https://claude.ai/chat/d' }),
-    item({ id: 'b', createdAt: now - 2000, url: 'https://claude.ai/chat/bbb' })
+    item({ id: 'draft', draft: true, createdAt: now - 3000, url: 'https://gemini.google.com/app/d' }),
+    item({ id: 'b', createdAt: now - 2000, url: 'https://gemini.google.com/app/bbb' })
   ];
   await env.send({ type: env.MSG.RESTORE_DONE }, 1);
   assert.equal(env.calls.created.length, 1);
-  assert.equal(env.calls.created[0].url, 'https://claude.ai/chat/bbb');
+  assert.equal(env.calls.created[0].url, 'https://gemini.google.com/app/bbb');
   // b is now marked restoring → a second RESTORE_DONE must not open it again
   await env.send({ type: env.MSG.RESTORE_DONE }, 1);
   assert.equal(env.calls.created.length, 1);
@@ -244,7 +244,7 @@ test('RESTORE_DONE does nothing when auto-send is off', async () => {
 test('QUEUE_ADD with draft flag stores a ready draft', async () => {
   const env = createEnv();
   await env.settle();
-  const r = await env.send({ type: env.MSG.QUEUE_ADD, item: { text: 'my draft', url: 'https://claude.ai/chat/aaa', draft: true } });
+  const r = await env.send({ type: env.MSG.QUEUE_ADD, item: { text: 'my draft', url: 'https://gemini.google.com/app/aaa', draft: true } });
   assert.equal(r.ok, true);
   assert.equal(r.item.draft, true);
   assert.equal(r.item.status, 'ready');
@@ -255,13 +255,13 @@ test('new-chat group: followers wait for the first message, then go into the sam
   await env.settle();
   const now = Date.now();
   env.store.queue = [
-    item({ id: 'g1', url: 'https://claude.ai/new', newChatGroup: 'G', createdAt: now - 2000 }),
-    item({ id: 'g2', url: 'https://claude.ai/new', newChatGroup: 'G', createdAt: now - 1000 })
+    item({ id: 'g1', url: 'https://gemini.google.com/app', newChatGroup: 'G', createdAt: now - 2000 }),
+    item({ id: 'g2', url: 'https://gemini.google.com/app', newChatGroup: 'G', createdAt: now - 1000 })
   ];
   // only g1 is eligible at first
   await env.send({ type: env.MSG.RESTORE_DONE }, 1);
   assert.equal(env.calls.created.length, 1);
-  const next = await env.send({ type: env.MSG.RESTORE_NEXT, url: 'https://claude.ai/new', peek: true }, 1);
+  const next = await env.send({ type: env.MSG.RESTORE_NEXT, url: 'https://gemini.google.com/app', peek: true }, 1);
   assert.equal(next.item.id, 'g1', 'g2 is not offered before g1');
 
   // g1 sent
@@ -269,28 +269,28 @@ test('new-chat group: followers wait for the first message, then go into the sam
   await env.send({ type: env.MSG.QUEUE_MARK_SENT, id: 'g1', token: claim.token }, 100);
   const g2 = env.store.queue.find((i) => i.id === 'g2');
   assert.ok(g2.awaitRebind, 'g2 waits for the new chat url');
-  let peek = await env.send({ type: env.MSG.RESTORE_NEXT, url: 'https://claude.ai/new', peek: true }, 100);
-  assert.equal(peek.item, null, 'g2 must not be sent to /new (would create a different chat)');
+  let peek = await env.send({ type: env.MSG.RESTORE_NEXT, url: 'https://gemini.google.com/app', peek: true }, 100);
+  assert.equal(peek.item, null, 'g2 must not be sent to /app (would create a different chat)');
 
-  await env.send({ type: env.MSG.QUEUE_REBIND, group: 'G', url: 'https://claude.ai/chat/newid' }, 100);
-  peek = await env.send({ type: env.MSG.RESTORE_NEXT, url: 'https://claude.ai/chat/newid', peek: true }, 100);
+  await env.send({ type: env.MSG.QUEUE_REBIND, group: 'G', url: 'https://gemini.google.com/app/appid' }, 100);
+  peek = await env.send({ type: env.MSG.RESTORE_NEXT, url: 'https://gemini.google.com/app/appid', peek: true }, 100);
   assert.equal(peek.item.id, 'g2');
-  assert.equal(env.store.queue.find((i) => i.id === 'g2').url, 'https://claude.ai/chat/newid');
+  assert.equal(env.store.queue.find((i) => i.id === 'g2').url, 'https://gemini.google.com/app/appid');
 });
 
 test('new-chat group: unknown new chat url fails followers instead of guessing', async () => {
   const env = createEnv();
   await env.settle();
-  env.store.queue = [item({ id: 'g2', url: 'https://claude.ai/new', newChatGroup: 'G', awaitRebind: Date.now() })];
+  env.store.queue = [item({ id: 'g2', url: 'https://gemini.google.com/app', newChatGroup: 'G', awaitRebind: Date.now() })];
   const r = await env.send({ type: env.MSG.QUEUE_REBIND, group: 'G', url: null }, 1);
   assert.equal(r.ok, false);
   assert.equal(env.store.queue[0].status, 'failed');
   assert.equal(env.store.queue[0].lastError, 'new-chat-url-unknown');
-  assert.ok(env.calls.notified.some((n) => n.id === 'cq-auto-failed:g2'));
+  assert.ok(env.calls.notified.some((n) => n.id === 'gq-auto-failed:g2'));
 });
 
 test('markReady in auto mode opens the original conversation', async () => {
-  const env = createEnv({ tabs: [{ id: 5, url: 'https://claude.ai/chat/aaa', windowId: 1 }] });
+  const env = createEnv({ tabs: [{ id: 5, url: 'https://gemini.google.com/app/aaa', windowId: 1 }] });
   await env.settle();
   env.store.queue = [item({ id: 'w', status: 'waiting', reasons: ['session'] })];
   await env.send({ type: env.MSG.USAGE_SNAPSHOT, snapshot: { source: 'api', full: false } }, 5);

@@ -2,7 +2,7 @@
  * Service worker：佇列的唯一寫入者、重置排程（chrome.alarms）、桌面通知、分頁協調。
  *
  * 所有佇列異動都經過這裡並用 promise 串列（mutex）序列化，
- * 避免多個 claude.ai 分頁與 popup 同時讀寫 chrome.storage 造成覆蓋或重複送出。
+ * 避免多個 gemini.google.com 分頁與 popup 同時讀寫 chrome.storage 造成覆蓋或重複送出。
  */
 importScripts(
   '/src/shared/constants.js',
@@ -15,20 +15,20 @@ importScripts(
   '/src/background/filestore.js'
 );
 
-const { STORAGE_KEYS: K, STATUS, ALARMS, TIMING, LIMITS, MSG } = CQ;
-const t = CQ.t;
-const log = CQ.logger.createLogger('sw');
-const NOTIFY_READY = 'cq-ready';
-const NOTIFY_FAILED = 'cq-check-failed';
-const NOTIFY_AUTO_FAILED_PREFIX = 'cq-auto-failed:';
-const NOTIFY_KEEPALIVE_FAILED = 'cq-keepalive-failed';
-const NOTIFY_UPDATE = 'cq-update';
-const NEW_CHAT_URL = 'https://claude.ai/new';
+const { STORAGE_KEYS: K, STATUS, ALARMS, TIMING, LIMITS, MSG } = GQ;
+const t = GQ.t;
+const log = GQ.logger.createLogger('sw');
+const NOTIFY_READY = 'gq-ready';
+const NOTIFY_FAILED = 'gq-check-failed';
+const NOTIFY_AUTO_FAILED_PREFIX = 'gq-auto-failed:';
+const NOTIFY_KEEPALIVE_FAILED = 'gq-keepalive-failed';
+const NOTIFY_UPDATE = 'gq-update';
+const NEW_CHAT_URL = 'https://gemini.google.com/app';
 // 自動重設連續失敗幾次後暫停（直到看到工作階段重新開始，或重新開啟設定）
 const KEEPALIVE_MAX_FAILS = 3;
 // 自動重設項目一直沒被分頁領取的時間上限（逾時就移除，下次再試）
 const KEEPALIVE_STALE_MS = 15 * 60 * 1000;
-const CLAUDE_MATCH = 'https://claude.ai/*';
+const GEMINI_MATCH = 'https://gemini.google.com/*';
 // 已交給某個分頁還原、但還沒取得 claim（例如倒數中）的項目，在這段時間內不會再被自動開啟
 const RESTORING_TTL_MS = 3 * 60 * 1000;
 // 新對話群組：第一則送出後等待網址回報的時間上限，逾時就標失敗（不冒險送到別的新對話）
@@ -61,7 +61,7 @@ function locked(fn) {
 
 let logBuffer = [];
 let logFlushTimer = null;
-CQ.logger.setSink((entry) => {
+GQ.logger.setSink((entry) => {
   logBuffer.push(entry);
   if (!logFlushTimer) logFlushTimer = setTimeout(flushLogs, 500);
 });
@@ -97,7 +97,7 @@ async function saveQueue(queue) {
  */
 async function gcFiles(queue) {
   try {
-    const n = await CQ.fileStore.gc(queue.map((i) => i.id));
+    const n = await GQ.fileStore.gc(queue.map((i) => i.id));
     if (n) log.info('attachments removed', { count: n });
   } catch (e) {
     log.warn('attachment gc failed', { error: e.message });
@@ -121,7 +121,7 @@ function updateBadge(queue) {
   // 自動重設的項目是內部工作，不算在徽章數字裡
   const active = queue.filter((i) => i.status !== STATUS.SENT && !i.keepalive);
   const text = active.length ? String(active.length) : '';
-  let color = '#d97757';
+  let color = '#1a73e8';
   if (active.some((i) => i.status === STATUS.FAILED)) color = '#c0392b';
   else if (active.some((i) => i.status === STATUS.READY)) color = '#2e8b57';
   chrome.action.setBadgeText({ text }).catch(() => {});
@@ -151,7 +151,7 @@ async function scheduleResetAlarm() {
 async function requestUsageFromTab() {
   let tabs = [];
   try {
-    tabs = await chrome.tabs.query({ url: CLAUDE_MATCH });
+    tabs = await chrome.tabs.query({ url: GEMINI_MATCH });
   } catch (e) {
     log.warn('tabs.query failed', { error: e.message });
   }
@@ -160,7 +160,7 @@ async function requestUsageFromTab() {
     try {
       const res = await Promise.race([
         chrome.tabs.sendMessage(tab.id, { type: MSG.USAGE_REFRESH }),
-        new Promise((r) => setTimeout(() => r(null), 12000))
+        new Promise((r) => setTimeout(() => r(null), TIMING.USAGE_FETCH_TIMEOUT_MS + 3000))
       ]);
       if (res && res.snapshot) return res.snapshot;
     } catch (_) {
@@ -168,6 +168,98 @@ async function requestUsageFromTab() {
     }
   }
   return null;
+}
+
+// ─────────────────────────── 背景讀取 /usage 頁面 ───────────────────────────
+
+const probeWaiters = new Map(); // tabId -> resolve(snapshot)
+const probeInFlight = new Map(); // usageUrl -> Promise
+
+function waitForTabSnapshot(tabId, timeoutMs = TIMING.USAGE_FETCH_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      probeWaiters.delete(tabId);
+      resolve(null);
+    }, timeoutMs);
+    probeWaiters.set(tabId, (snap) => {
+      clearTimeout(timer);
+      probeWaiters.delete(tabId);
+      resolve(snap);
+    });
+  });
+}
+
+/**
+ * 自動到 https://gemini.google.com/usage（或對應 /u/<n>/usage）讀取結構化用量。
+ * - 若使用者自己已經開著該帳號的 /usage 分頁：優先直接詢問（在背景且過舊時重新整理），絕不關閉使用者的分頁。
+ * - 否則建立一個非作用中背景分頁（active: false，不搶焦點），讀完即自動關閉。
+ */
+function fetchUsageViaTab(originUrl) {
+  const usageUrl = GQ.text.usageUrlFor(originUrl);
+  if (probeInFlight.has(usageUrl)) return probeInFlight.get(usageUrl);
+  const p = runUsagePageProbe(usageUrl).finally(() => probeInFlight.delete(usageUrl));
+  probeInFlight.set(usageUrl, p);
+  return p;
+}
+
+async function runUsagePageProbe(usageUrl) {
+  const usageKey = GQ.text.conversationKey(usageUrl);
+  let existing = null;
+  try {
+    const tabs = await chrome.tabs.query({ url: GEMINI_MATCH });
+    existing = tabs.find((tb) => tb.url && GQ.text.conversationKey(tb.url) === usageKey) || null;
+  } catch (_) {}
+
+  if (existing) {
+    // 若使用者正看著 /usage，直接讀目前 DOM；若在背景，重新整理一次拿到最新百分比
+    if (!existing.active) {
+      const waitReload = waitForTabSnapshot(existing.id, TIMING.USAGE_FETCH_TIMEOUT_MS);
+      await chrome.tabs.reload(existing.id).catch(() => {});
+      const snap = await waitReload;
+      if (snap && (snap.session || snap.weekly)) {
+        return { ok: true, snapshot: snap, api: { session: snap.session, weekly: snap.weekly, extras: snap.extras || [] } };
+      }
+    }
+    try {
+      const res = await Promise.race([
+        chrome.tabs.sendMessage(existing.id, { type: MSG.USAGE_REFRESH }),
+        new Promise((r) => setTimeout(() => r(null), 10000))
+      ]);
+      const snap = res && res.snapshot;
+      if (snap && (snap.session || snap.weekly)) {
+        return { ok: true, snapshot: snap, api: { session: snap.session, weekly: snap.weekly, extras: snap.extras || [] } };
+      }
+    } catch (_) {
+      // 擴充功能剛安裝／更新，既有 /usage 分頁還沒載入 content script → 重新整理一次
+      const waitReload = waitForTabSnapshot(existing.id, TIMING.USAGE_FETCH_TIMEOUT_MS);
+      await chrome.tabs.reload(existing.id).catch(() => {});
+      const snap = await waitReload;
+      if (snap && (snap.session || snap.weekly)) {
+        return { ok: true, snapshot: snap, api: { session: snap.session, weekly: snap.weekly, extras: snap.extras || [] } };
+      }
+    }
+    return { ok: false, error: 'usage-tab-unreadable' };
+  }
+
+  let created = null;
+  try {
+    created = await chrome.tabs.create({ url: usageUrl, active: false });
+    const waitSnap = waitForTabSnapshot(created.id, TIMING.USAGE_FETCH_TIMEOUT_MS);
+    await chrome.storage.local.set({ [K.PROBE_TAB]: { tabId: created.id, at: Date.now() } });
+    log.debug('opened background /usage probe tab', { tabId: created.id });
+    const snap = await waitSnap;
+    if (snap && (snap.session || snap.weekly)) {
+      return { ok: true, snapshot: snap, api: { session: snap.session, weekly: snap.weekly, extras: snap.extras || [] } };
+    }
+    return { ok: false, error: (snap && snap.error) || 'usage-probe-timeout' };
+  } catch (e) {
+    return { ok: false, error: e.message || 'usage-probe-failed' };
+  } finally {
+    if (created && created.id != null) {
+      await chrome.storage.local.remove(K.PROBE_TAB).catch(() => {});
+      if (chrome.tabs.remove) await chrome.tabs.remove(created.id).catch(() => {});
+    }
+  }
 }
 
 async function handleResetCheck() {
@@ -185,7 +277,7 @@ async function handleResetCheck() {
   log.info('reset check', { due: due.length, attempt: rc.attempt, full: snap ? snap.full : 'no-tab' });
 
   if (!snap) {
-    // 沒有開著的 claude.ai 分頁可以確認；先通知，開啟對話時頁面會再確認一次
+    // 沒有開著的 gemini.google.com 分頁可以確認；先通知，開啟對話時頁面會再確認一次
     await markReady(due.map((i) => i.id), { unverified: true });
     return;
   }
@@ -255,7 +347,7 @@ async function markReady(ids, { unverified }) {
   if (!changed) return;
   log.info('items ready', { count: changed, unverified });
 
-  const settings = await CQ.settings.load();
+  const settings = await GQ.settings.load();
   const body = t(unverified ? 'notifyReadyBodyUnverified' : 'notifyReadyBody', { count: changed });
   if (settings.autoSend) {
     await notify(NOTIFY_READY, t('notifyReadyTitle'), t('notifyAutoSendBody', { count: changed }));
@@ -268,7 +360,7 @@ async function markReady(ids, { unverified }) {
 // ─────────────────────────── notifications ───────────────────────────
 
 async function notify(id, title, message) {
-  const settings = await CQ.settings.load();
+  const settings = await GQ.settings.load();
   if (!settings.notifications) return;
   try {
     await chrome.notifications.clear(id);
@@ -293,11 +385,11 @@ chrome.notifications.onClicked.addListener(async (id) => {
     const st = await getKeepaliveState();
     await focusOrOpen(st.conversationUrl || NEW_CHAT_URL);
   }
-  else if (id === NOTIFY_UPDATE) await chrome.tabs.create({ url: CQ.version.UPDATE_GUIDE_URL });
+  else if (id === NOTIFY_UPDATE) await chrome.tabs.create({ url: GQ.version.UPDATE_GUIDE_URL });
   else if (id.startsWith(NOTIFY_AUTO_FAILED_PREFIX)) {
     const itemId = id.slice(NOTIFY_AUTO_FAILED_PREFIX.length);
     const it = (await getQueue()).find((i) => i.id === itemId);
-    await focusOrOpen(it ? it.url : 'https://claude.ai/new');
+    await focusOrOpen(it ? it.url : NEW_CHAT_URL);
   }
 });
 
@@ -366,14 +458,14 @@ async function giveUp(id, token, reason) {
 
 /** 自動模式下，這次還原結束後繼續處理其他可送的項目 */
 async function continueAuto() {
-  const settings = await CQ.settings.load();
+  const settings = await GQ.settings.load();
   if (!settings.autoSend) return;
   await openNext('auto');
 }
 
 // ─────────────────────────── 自動重設（keepalive） ───────────────────────────
 //
-// claude.ai 的 5 小時工作階段在送出第一則訊息時才開始倒數。工作階段結束後如果沒人送訊息，
+// Gemini 的 5 小時工作階段在送出第一則訊息時才開始倒數。工作階段結束後如果沒人送訊息，
 // 就會一直停在「歸零」。開啟「自動重設」後，工作階段一結束就送出一則短訊息（預設 Hello World!）
 // 到一個固定的專用對話，讓下一個工作階段馬上開始倒數。
 // 送出本身沿用佇列的自動送出流程（keepalive 項目），所以一樣有 claim、對話確認、用量再確認等保護。
@@ -400,11 +492,11 @@ function setKeepaliveState(patch) {
 }
 
 /**
- * 自動重設的狀態判斷（CQ.session.keepaliveCheck，只看 API，不看頁面上的上限提示）。
+ * 自動重設的狀態判斷（GQ.session.keepaliveCheck，只看 API，不看頁面上的上限提示）。
  * 結果寫進 keepalive.lastCheck，就算沒開 debug log，也能在設定頁看到最後一次檢查的結論。
  */
 function checkKeepalive(snap, state, now = Date.now()) {
-  return CQ.session.keepaliveCheck(snap, state, now);
+  return GQ.session.keepaliveCheck(snap, state, now);
 }
 
 async function recordCheck(why, result, extra = {}) {
@@ -413,7 +505,7 @@ async function recordCheck(why, result, extra = {}) {
 }
 
 async function scheduleKeepaliveAlarm(snap) {
-  const settings = await CQ.settings.load();
+  const settings = await GQ.settings.load();
   if (!settings.autoReset) {
     await chrome.alarms.clear(ALARMS.KEEPALIVE);
     return;
@@ -451,7 +543,7 @@ async function scheduleKeepaliveAlarm(snap) {
  * force：略過冷卻（專用對話被刪除、改開新對話時）
  */
 async function triggerKeepalive(why, { unverified = false, force = false } = {}) {
-  const settings = await CQ.settings.load();
+  const settings = await GQ.settings.load();
   if (!settings.autoReset) return 'disabled';
   const state = await getKeepaliveState();
   const now = Date.now();
@@ -465,7 +557,7 @@ async function triggerKeepalive(why, { unverified = false, force = false } = {})
     if (q.some((i) => i.claim || (i.restoring && now - i.restoring.at < RESTORING_TTL_MS))) return 'queue-busy';
     if (settings.autoSend && q.some((i) => isAutoEligible(i, q, now))) return 'queue-busy';
     const it = {
-      id: CQ.text.uuid(),
+      id: GQ.text.uuid(),
       text: settings.autoResetText,
       url: state.conversationUrl || NEW_CHAT_URL,
       createdAt: now,
@@ -499,14 +591,14 @@ function knownEndedWithoutApi(state, now) {
 }
 
 async function evaluateKeepalive(snap, why) {
-  const settings = await CQ.settings.load();
+  const settings = await GQ.settings.load();
   if (!settings.autoReset) return;
   const now = Date.now();
   let state = await getKeepaliveState();
   const c = checkKeepalive(snap, state, now);
 
   if (c.result === 'session-active') {
-    // 記下工作階段結束時間（之後讀不到用量時用來判斷）；你自己用了 Claude → 清掉連續失敗次數
+    // 記下工作階段結束時間（之後讀不到用量時用來判斷）；你自己用了 Gemini → 清掉連續失敗次數
     const patch = {};
     if (state.lastKnownEnd !== c.endAt) patch.lastKnownEnd = c.endAt;
     if (state.failCount) patch.failCount = 0;
@@ -525,7 +617,7 @@ async function evaluateKeepalive(snap, why) {
 }
 
 async function handleKeepaliveAlarm() {
-  const settings = await CQ.settings.load();
+  const settings = await GQ.settings.load();
   if (!settings.autoReset) return;
   // 分頁查詢用量時也會回報 USAGE_SNAPSHOT（同樣會評估）；重複觸發由「佇列中已有自動重設項目」擋下
   const snap = await requestUsageFromTab();
@@ -534,7 +626,7 @@ async function handleKeepaliveAlarm() {
     await evaluateKeepalive(snap, 'alarm');
     return;
   }
-  // 沒有可以查詢的 claude.ai 分頁（沒開、被凍結或被 Chrome 的記憶體節省功能丟棄）
+  // 沒有可以查詢的 gemini.google.com 分頁（沒開、被凍結或被 Chrome 的記憶體節省功能丟棄）
   // → 直接開啟專用對話，頁面載入後會再確認工作階段是否真的歸零
   const state = await getKeepaliveState();
   const result = knownEndedWithoutApi(state, Date.now())
@@ -556,7 +648,7 @@ async function keepaliveFailed(item, reason, { notify: shouldNotify }) {
     // 專用對話不見了（被刪除）→ 忘記它，改開新對話再試一次
     await setKeepaliveState({ conversationUrl: null, lastError: reason });
     log.warn('keepalive conversation missing, retrying in a new chat');
-    if (!CQ.text.isNewChatUrl(item.url)) {
+    if (!GQ.text.isNewChatUrl(item.url)) {
       await triggerKeepalive('conversation-missing', { unverified: true, force: true });
       return;
     }
@@ -600,10 +692,10 @@ async function onKeepaliveToggled(enabled) {
 // ─────────────────────────── tabs ───────────────────────────
 
 async function findTabFor(url) {
-  const key = CQ.text.conversationKey(url);
+  const key = GQ.text.conversationKey(url);
   try {
-    const tabs = await chrome.tabs.query({ url: CLAUDE_MATCH });
-    return tabs.find((tb) => tb.url && CQ.text.conversationKey(tb.url) === key) || null;
+    const tabs = await chrome.tabs.query({ url: GEMINI_MATCH });
+    return tabs.find((tb) => tb.url && GQ.text.conversationKey(tb.url) === key) || null;
   } catch (_) {
     return null;
   }
@@ -772,11 +864,11 @@ async function fetchLatestVersion() {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), UPDATE_FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(CQ.version.MANIFEST_URL, { credentials: 'omit', cache: 'no-store', signal: ctrl.signal });
+    const res = await fetch(GQ.version.MANIFEST_URL, { credentials: 'omit', cache: 'no-store', signal: ctrl.signal });
     if (!res.ok) throw new Error('http ' + res.status);
     const data = await res.json();
     const v = data && typeof data.version === 'string' ? data.version.trim() : '';
-    if (!CQ.version.isValid(v)) throw new Error('bad version');
+    if (!GQ.version.isValid(v)) throw new Error('bad version');
     return v;
   } finally {
     clearTimeout(timer);
@@ -794,7 +886,7 @@ function checkForUpdate(why) {
 }
 
 async function runUpdateCheck(why) {
-  const settings = await CQ.settings.load();
+  const settings = await GQ.settings.load();
   if (!settings.updateCheck) return 'disabled';
   if (!(await isDevInstall())) return 'not-dev';
   const now = Date.now();
@@ -808,7 +900,7 @@ async function runUpdateCheck(why) {
     return 'error';
   }
   const current = currentVersion();
-  const newer = CQ.version.compare(latest, current) > 0;
+  const newer = GQ.version.compare(latest, current) > 0;
   const st = await setUpdateState({ latest, checkedAt: now, error: null });
   log.info('update check', { why, current, latest, newer });
   if (newer && st.notifiedVersion !== latest) {
@@ -821,29 +913,29 @@ async function runUpdateCheck(why) {
 
 /** 排每天一次的檢查；距離上次檢查超過一天就馬上查一次 */
 async function scheduleUpdateCheck(why = 'startup') {
-  const settings = await CQ.settings.load();
+  const settings = await GQ.settings.load();
   if (!settings.updateCheck || !(await isDevInstall())) {
     await chrome.alarms.clear(ALARMS.UPDATE_CHECK);
     return;
   }
-  const periodInMinutes = CQ.version.CHECK_INTERVAL_MS / 60000;
+  const periodInMinutes = GQ.version.CHECK_INTERVAL_MS / 60000;
   const existing = await chrome.alarms.get(ALARMS.UPDATE_CHECK);
   if (!existing) await chrome.alarms.create(ALARMS.UPDATE_CHECK, { delayInMinutes: periodInMinutes, periodInMinutes });
   const st = await getUpdateState();
-  if (Date.now() - st.checkedAt >= CQ.version.CHECK_INTERVAL_MS) await checkForUpdate(why);
+  if (Date.now() - st.checkedAt >= GQ.version.CHECK_INTERVAL_MS) await checkForUpdate(why);
 }
 
 /** 第一次安裝 → 開啟使用教學；更新 → 記下舊版本，popup 顯示「已更新到 vX」 */
 async function handleInstalled(details) {
   const reason = details && details.reason;
   if (reason === 'install') {
-    await chrome.tabs.create({ url: CQ.version.GUIDE_URL });
+    await chrome.tabs.create({ url: GQ.version.GUIDE_URL });
     log.info('installed, guide opened');
   } else if (reason === 'update') {
     const from = details.previousVersion;
     const to = currentVersion();
     // 開發人員模式按「重新載入」也是 update，但版本沒變 → 不提示
-    if (from && CQ.version.compare(to, from) > 0) {
+    if (from && GQ.version.compare(to, from) > 0) {
       await setUpdateState({ updatedFrom: from });
       log.info('updated', { from, to });
     }
@@ -890,6 +982,12 @@ async function reconcile() {
     const pending = await getVal(K.PENDING_RESTORE, null);
     if (pending && now - pending.at > TIMING.PENDING_RESTORE_TTL_MS) {
       await chrome.storage.local.remove(K.PENDING_RESTORE);
+    }
+
+    const leftoverProbe = await getVal(K.PROBE_TAB, null);
+    if (leftoverProbe && leftoverProbe.tabId != null && !probeWaiters.has(leftoverProbe.tabId)) {
+      await chrome.storage.local.remove(K.PROBE_TAB);
+      if (chrome.tabs.remove) await chrome.tabs.remove(leftoverProbe.tabId).catch(() => {});
     }
   });
   await scheduleResetAlarm();
@@ -939,9 +1037,9 @@ const handlers = {
     if (text.length > 200000) return { ok: false, error: 'text too long' };
     const now = Date.now();
     const newItem = {
-      id: CQ.text.uuid(),
+      id: GQ.text.uuid(),
       text,
-      url: String(item.url || 'https://claude.ai/new'),
+      url: String(item.url || NEW_CHAT_URL),
       createdAt: now,
       resetAt: Number(item.resetAt) > now ? Number(item.resetAt) : now + TIMING.FALLBACK_RESET_MS,
       resetEstimated: !!item.resetEstimated || !(Number(item.resetAt) > now),
@@ -961,7 +1059,7 @@ const handlers = {
     const saved = await locked(async () => {
       if (stageIds.length) {
         // 先把暫存的附件指向這個項目；任何一個不見了就整則不排隊（輸入框不會被清空）
-        const linked = await CQ.fileStore.link(stageIds, newItem.id);
+        const linked = await GQ.fileStore.link(stageIds, newItem.id);
         if (!linked) return 'attachment-missing';
         newItem.attachments = linked;
       }
@@ -997,10 +1095,10 @@ const handlers = {
       return { ok: false, error: 'file-too-large' };
     }
     return locked(async () => {
-      if ((await CQ.fileStore.totalSize()) + size > LIMITS.MAX_TOTAL_FILE_BYTES) {
+      if ((await GQ.fileStore.totalSize()) + size > LIMITS.MAX_TOTAL_FILE_BYTES) {
         return { ok: false, error: 'storage-full' };
       }
-      const id = await CQ.fileStore.stage(
+      const id = await GQ.fileStore.stage(
         { name: meta.name, type: meta.type, size, lastModified: meta.lastModified },
         data
       );
@@ -1012,7 +1110,7 @@ const handlers = {
     const q = await getQueue();
     const it = q.find((i) => i.id === id);
     if (!it || !(it.attachments || []).some((a) => a.fileId === fileId)) return { ok: false, error: 'not found' };
-    const rec = await CQ.fileStore.get(fileId);
+    const rec = await GQ.fileStore.get(fileId);
     if (!rec || rec.itemId !== id) return { ok: false, error: 'missing' };
     return {
       ok: true,
@@ -1069,7 +1167,7 @@ const handlers = {
       if (!it) return { ok: false, reason: 'not-found' };
       if (it.status === STATUS.SENT) return { ok: false, reason: 'sent' };
       if (it.claim && Date.now() - it.claim.at < TIMING.CLAIM_TTL_MS) return { ok: false, reason: 'claimed' };
-      const token = CQ.text.uuid();
+      const token = GQ.text.uuid();
       it.claim = { token, tabId: sender.tab ? sender.tab.id : null, at: Date.now() };
       it.attempts = (it.attempts || 0) + 1;
       await saveQueue(q);
@@ -1186,17 +1284,17 @@ const handlers = {
   },
 
   async [MSG.RESTORE_NEXT]({ url, peek }) {
-    const key = CQ.text.conversationKey(url);
+    const key = GQ.text.conversationKey(url);
     const q = await getQueue();
     const now = Date.now();
     // 同一對話的下一則：規則與自動開啟相同，但「還原中」標記可能就是這個分頁自己留下的，所以不看它
     const item = q.find(
       (i) =>
-        CQ.text.conversationKey(i.url) === key && isAutoEligible({ ...i, restoring: null }, q, now)
+        GQ.text.conversationKey(i.url) === key && isAutoEligible({ ...i, restoring: null }, q, now)
     );
     if (!item) return { item: null };
     if (peek) return { item: { id: item.id } };
-    const settings = await CQ.settings.load();
+    const settings = await GQ.settings.load();
     return { item, mode: settings.autoSend ? 'auto' : 'manual' };
   },
 
@@ -1276,7 +1374,7 @@ const handlers = {
   /** 新對話群組：第一則送出後建立的對話網址；url 為 null 代表沒取得 → 後續項目標失敗 */
   async [MSG.QUEUE_REBIND]({ group, url }) {
     if (!group) return { ok: false };
-    const valid = typeof url === 'string' && /^https:\/\/claude\.ai\//.test(url) && !CQ.text.isNewChatUrl(url);
+    const valid = typeof url === 'string' && /^https:\/\/gemini\.google\.com\//.test(url) && !GQ.text.isNewChatUrl(url);
     const failed = await locked(async () => {
       const q = await getQueue();
       const out = [];
@@ -1299,8 +1397,10 @@ const handlers = {
     return { ok: valid };
   },
 
-  async [MSG.USAGE_SNAPSHOT]({ snapshot }) {
+  async [MSG.USAGE_SNAPSHOT]({ snapshot }, sender) {
     if (!snapshot || typeof snapshot !== 'object') return { ok: false };
+    const waiter = sender && sender.tab && probeWaiters.get(sender.tab.id);
+    if (waiter) waiter(snapshot);
     await chrome.storage.local.set({ [K.USAGE]: snapshot });
     // 輪詢時發現已恢復 → 提早把等待中的項目標為 ready
     const trusted = ['api', 'simulated'].includes(snapshot.source);
@@ -1321,7 +1421,7 @@ const handlers = {
 
   /** 自動重設：第一次在新對話送出後，記下專用對話的網址 */
   async [MSG.KEEPALIVE_BOUND]({ url }) {
-    const valid = typeof url === 'string' && /^https:\/\/claude\.ai\//.test(url) && !CQ.text.isNewChatUrl(url);
+    const valid = typeof url === 'string' && /^https:\/\/gemini\.google\.com\//.test(url) && !GQ.text.isNewChatUrl(url);
     if (!valid) return { ok: false };
     await setKeepaliveState({ conversationUrl: url });
     log.info('keepalive conversation bound');
@@ -1340,19 +1440,28 @@ const handlers = {
     return { ok: true };
   },
 
+  async [MSG.USAGE_FETCH_PAGE]({ url }, sender) {
+    const originUrl = url || (sender && sender.tab && sender.tab.url) || NEW_CHAT_URL;
+    return fetchUsageViaTab(originUrl);
+  },
+
   async [MSG.USAGE_REFRESH_REQUEST]() {
-    const snapshot = await requestUsageFromTab();
+    let snapshot = await requestUsageFromTab();
+    if (!snapshot) {
+      const probed = await fetchUsageViaTab(NEW_CHAT_URL);
+      if (probed && probed.snapshot) snapshot = probed.snapshot;
+    }
     return { snapshot, noTab: !snapshot };
   },
 
   async [MSG.CLEAR_ALL]() {
     await locked(async () => {
       await chrome.storage.local.clear();
-      await CQ.fileStore.clear().catch((e) => log.warn('clear attachments failed', { error: e.message }));
+      await GQ.fileStore.clear().catch((e) => log.warn('clear attachments failed', { error: e.message }));
     });
     await chrome.alarms.clearAll();
     updateBadge([]);
-    await CQ.settings.load();
+    await GQ.settings.load();
     await scheduleUpdateCheck('cleared').catch(() => {});
     return { ok: true };
   },

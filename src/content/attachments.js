@@ -1,5 +1,5 @@
 /*
- * ⚠️ 依賴 claude.ai 的附件 DOM（選擇器在 selectors.js 的 attachmentItem / attachmentRemove /
+ * ⚠️ 依賴 gemini.google.com 的附件 DOM（選擇器在 selectors.js 的 attachmentItem / attachmentRemove /
  *    attachmentUploading / fileInput）。
  *
  * 附件排隊：
@@ -9,21 +9,21 @@
  *     對不上（例如 Google Drive 附件、長文字貼上轉成的附件、擴充功能載入前就加入的檔案）就回報失敗，
  *     由 interceptor 照原本行為放行，不冒險排一則少了附件的訊息。
  *   - attach()：還原時用頁面上真正的 <input type="file"> 把檔案加回去（備援：合成拖放），
- *     並等到上傳完成。不偽造任何 claude.ai 的請求。
+ *     並等到上傳完成。不偽造任何 gemini.google.com 的請求。
  *
  * debug log 只記數量與大小，不記檔名與內容。
  */
 (function (root) {
-  const CQ = (root.CQ = root.CQ || {});
-  const log = CQ.logger.createLogger('attachments');
-  const { TIMING, LIMITS } = CQ;
+  const GQ = (root.GQ = root.GQ || {});
+  const log = GQ.logger.createLogger('attachments');
+  const { TIMING, LIMITS } = GQ;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   /** 你加入的檔案（依加入順序） */
   let tracked = [];
 
   function scope() {
-    return CQ.selectors.getComposer() || document;
+    return GQ.selectors.getComposer() || document;
   }
 
   // ─────────── 輸入區的附件卡片 ───────────
@@ -31,9 +31,9 @@
   /** 合併所有候選選擇器的結果，只留最內層、不在輸入框內、不是按鈕或 input 的元素 */
   function items() {
     const sc = scope();
-    const editor = CQ.editor.getEditor();
+    const editor = GQ.editor.getEditor();
     const found = new Set();
-    for (const sel of CQ.selectors.SELECTORS.attachmentItem) {
+    for (const sel of GQ.selectors.SELECTORS.attachmentItem) {
       let els = [];
       try {
         els = Array.from(sc.querySelectorAll(sel));
@@ -49,7 +49,7 @@
     if (inner.length) return sortByDom(inner);
     // 備援：一個附件一個「移除」按鈕
     return sortByDom(
-      CQ.selectors.findAll('attachmentRemove', sc).filter((b) => !editor || !editor.contains(b))
+      GQ.selectors.findAll('attachmentRemove', sc).filter((b) => !editor || !editor.contains(b))
     );
   }
 
@@ -63,8 +63,8 @@
 
   function uploading() {
     const sc = scope();
-    const editor = CQ.editor.getEditor();
-    return CQ.selectors.findAll('attachmentUploading', sc).some((el) => !editor || !editor.contains(el));
+    const editor = GQ.editor.getEditor();
+    return GQ.selectors.findAll('attachmentUploading', sc).some((el) => !editor || !editor.contains(el));
   }
 
   function labelOf(el) {
@@ -75,7 +75,7 @@
     return parts.join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
   }
 
-  /** 卡片上的文字是否指向這個檔名（claude.ai 可能截斷長檔名，所以也比對去掉副檔名的開頭） */
+  /** 卡片上的文字是否指向這個檔名（gemini.google.com 可能截斷長檔名，所以也比對去掉副檔名的開頭） */
   function nameMatches(label, name) {
     if (!label || !name) return false;
     const n = name.toLowerCase();
@@ -110,7 +110,7 @@
 
   function onPaste(e) {
     if (!e.isTrusted || !e.clipboardData) return;
-    if (!CQ.selectors.closestEditor(e.target)) return;
+    if (!GQ.selectors.closestEditor(e.target)) return;
     record(e.clipboardData.files, 'paste');
   }
 
@@ -168,7 +168,7 @@
     const ids = [];
     for (const f of files) {
       const data = await readBase64(f);
-      const res = await CQ.bg.send(CQ.MSG.FILE_STAGE, {
+      const res = await GQ.bg.send(GQ.MSG.FILE_STAGE, {
         file: { name: f.name, type: f.type, size: f.size, lastModified: f.lastModified, data }
       });
       if (!res || !res.ok) return { error: (res && res.error) || 'stage-failed' };
@@ -190,7 +190,7 @@
     for (const a of item.attachments || []) {
       let res = null;
       try {
-        res = await CQ.bg.send(CQ.MSG.FILE_GET, { id: item.id, fileId: a.fileId });
+        res = await GQ.bg.send(GQ.MSG.FILE_GET, { id: item.id, fileId: a.fileId });
       } catch (_) {}
       if (!res || !res.ok || !res.file) return { ok: false };
       files.push(base64ToFile(res.file));
@@ -211,7 +211,7 @@
 
   function findFileInput() {
     const sc = scope();
-    return (sc !== document && CQ.selectors.find('fileInput', sc)) || CQ.selectors.find('fileInput');
+    return (sc !== document && GQ.selectors.find('fileInput', sc)) || GQ.selectors.find('fileInput');
   }
 
   function viaInput(files) {
@@ -226,7 +226,7 @@
   }
 
   function viaDrop(files) {
-    const target = CQ.editor.getEditor() || scope();
+    const target = GQ.editor.getEditor() || scope();
     if (!target || target === document) return false;
     const dt = new DataTransfer();
     files.forEach((f) => dt.items.add(f));
@@ -290,9 +290,9 @@
   /** 點每張卡片的移除按鈕，讓輸入區恢復乾淨。回傳是否全部移除 */
   async function removeAll() {
     for (let round = 0; round < 3 && count() > 0; round++) {
-      const editor = CQ.editor.getEditor();
+      const editor = GQ.editor.getEditor();
       const sc = scope();
-      const btns = CQ.selectors
+      const btns = GQ.selectors
         .findAll('attachmentRemove', sc)
         .filter((b) => !editor || !editor.contains(b));
       if (!btns.length) break;
@@ -329,7 +329,7 @@
     window.addEventListener('paste', onPaste, true);
   }
 
-  CQ.attachments = {
+  GQ.attachments = {
     install,
     reset,
     count,

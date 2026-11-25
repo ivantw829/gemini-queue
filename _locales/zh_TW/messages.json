@@ -1,9 +1,9 @@
 {
   "extName": {
-    "message": "Claude Queue"
+    "message": "Gemini Queue"
   },
   "extDescription": {
-    "message": "claude.ai 用量達上限時保存你要送出的訊息，額度重置後協助你送出。"
+    "message": "gemini.google.com 用量達上限時保存你要送出的訊息，額度重置後協助你送出。"
   },
   "estimatedSuffix": {
     "message": "（時間為估計）"
@@ -18,7 +18,7 @@
     "message": "用量已滿，訊息已排入佇列，預計 {time} 重置"
   },
   "toastHasAttachment": {
-    "message": "這則訊息有無法保存的附件（例如 Google Drive 檔案、長文字貼上轉成的附件），無法排隊，已照原本方式處理"
+    "message": "這則訊息有無法保存的附件（例如 Google 雲端硬碟檔案、擴充功能載入前已加入的檔案），無法排隊，已照原本方式處理"
   },
   "toastSaveFailed": {
     "message": "訊息保存失敗，文字仍保留在輸入框，請勿關閉分頁"
@@ -36,10 +36,10 @@
     "message": "偵測到你已手動送出佇列中的相同內容，已從佇列移除"
   },
   "toastSelectorMissing": {
-    "message": "Claude Queue 找不到頁面元素「{name}」，claude.ai 介面可能已改版。請到設定頁開啟 debug log 並回報。"
+    "message": "Gemini Queue 找不到頁面元素「{name}」，gemini.google.com 介面可能已改版。請到設定頁開啟 debug log 並回報。"
   },
   "toastExtensionReloaded": {
-    "message": "Claude Queue 已更新或重新載入，請重新整理此頁面"
+    "message": "Gemini Queue 已更新或重新載入，請重新整理此頁面"
   },
   "toastRestoreError": {
     "message": "還原訊息時發生錯誤，訊息仍保留在佇列"
@@ -135,22 +135,22 @@
     "message": "關閉"
   },
   "notifyReadyTitle": {
-    "message": "Claude 額度已重置"
+    "message": "Gemini 額度已重置"
   },
   "notifyReadyBody": {
     "message": "佇列中有 {count} 則訊息可以送出，點此開啟原對話。"
   },
   "notifyReadyBodyUnverified": {
-    "message": "預計已重置（尚未開啟 claude.ai 確認），佇列中有 {count} 則訊息，點此開啟原對話。"
+    "message": "預計已重置（尚未確認），佇列中有 {count} 則訊息，點此開啟原對話。"
   },
   "notifyAutoSendBody": {
     "message": "正在自動送出佇列中的 {count} 則訊息。"
   },
   "notifyCheckFailedTitle": {
-    "message": "Claude Queue：無法確認額度已重置"
+    "message": "Gemini Queue：無法確認額度已重置"
   },
   "notifyCheckFailedBody": {
-    "message": "已重試 10 次仍顯示用量已滿。訊息仍保留在佇列，開啟 claude.ai 時會再自動檢查。"
+    "message": "已重試 10 次仍顯示用量已滿。訊息仍保留在佇列，開啟 gemini.google.com 時會再自動檢查。"
   },
   "popupRefresh": {
     "message": "重新查詢用量"
@@ -165,10 +165,10 @@
     "message": "儲存失敗（訊息可能正在送出）"
   },
   "usageSession": {
-    "message": "Session（5 小時）"
+    "message": "目前用量（5 小時）"
   },
   "usageWeekly": {
-    "message": "每週"
+    "message": "每週上限"
   },
   "usageResetAt": {
     "message": "{time} 重置 · 剩 {countdown}"
@@ -182,26 +182,23 @@
   "usageUnknown": {
     "message": "無法判斷用量狀態"
   },
-  "usageUnknownOpenClaude": {
-    "message": "尚無用量資料，開啟 claude.ai 後會自動偵測"
-  },
   "usageSourceLine": {
     "message": "來源：{source} · {ago} 分鐘前更新"
   },
   "usageEndpointError": {
-    "message": "用量端點讀取失敗"
+    "message": "讀取 /usage 失敗"
   },
   "usageNeedTab": {
-    "message": "需要開著 claude.ai 分頁才能查詢"
+    "message": "無法讀取 gemini.google.com/usage（請確認已在 Chrome 登入 Gemini）"
   },
   "sourceApi": {
-    "message": "用量端點"
+    "message": "gemini.google.com/usage"
   },
   "sourceApiDom": {
-    "message": "用量端點＋頁面提示"
+    "message": "gemini.google.com/usage＋頁面提示"
   },
   "sourceDom": {
-    "message": "頁面提示文字（備援）"
+    "message": "頁面提示偵測"
   },
   "sourceSimulated": {
     "message": "模擬（debug）"
@@ -229,9 +226,6 @@
   },
   "convNew": {
     "message": "新對話"
-  },
-  "convProject": {
-    "message": "專案新對話"
   },
   "metaResetAt": {
     "message": "預計 {time} 重置（剩 {countdown}）"
@@ -279,7 +273,7 @@
     "message": "重新整理"
   },
   "optionsTitle": {
-    "message": "Claude Queue 設定"
+    "message": "Gemini Queue 設定"
   },
   "optionsIntro": {
     "message": "所有資料只存在本機（chrome.storage.local），不會上傳到任何伺服器。"
@@ -294,7 +288,7 @@
     "message": "額度重置後自動開啟原對話、填入文字並在 3 秒倒數後送出。"
   },
   "optAutoSendWarning": {
-    "message": "⚠ 警告：開啟後，排隊的訊息會在你不在電腦前時自動送出到 claude.ai，並可能自動開啟或切換分頁。若對話情境已改變，送出的內容可能不再合適。送出後無法撤回。預設關閉，建議只在你確定需要時開啟。"
+    "message": "⚠ 警告：開啟後，排隊的訊息會在你不在電腦前時自動送出到 gemini.google.com，並可能自動開啟或切換分頁。若對話情境已改變，送出的內容可能不再合適。送出後無法撤回。預設關閉，建議只在你確定需要時開啟。"
   },
   "optAutoSendConfirm": {
     "message": "確定要開啟「重置後自動送出」嗎？\n\n排隊的訊息會在額度重置後自動送出，不再詢問你。"
@@ -309,7 +303,7 @@
     "message": "用量輪詢頻率（分鐘）"
   },
   "optPollMinutesDesc": {
-    "message": "開著 claude.ai 分頁時多久查詢一次用量（1–30，預設 2）。多個分頁會共用結果。"
+    "message": "開著 gemini.google.com 分頁時多久檢查一次狀態（1–30，預設 2）。多個分頁會共用結果。"
   },
   "optSectionDebug": {
     "message": "除錯"
@@ -381,7 +375,7 @@
     "message": "無法自動送出，訊息已保留在佇列並標記為失敗"
   },
   "notifyAutoFailedTitle": {
-    "message": "Claude Queue：自動送出未完成"
+    "message": "Gemini Queue：自動送出未完成"
   },
   "notifyAutoFailedBody": {
     "message": "有 1 則訊息無法自動送出（{reason}），仍保留在佇列。點此開啟原對話。"
@@ -438,10 +432,10 @@
     "message": "工作階段歸零時自動送出一則訊息"
   },
   "optAutoResetDesc": {
-    "message": "claude.ai 的 5 小時工作階段要等你送出第一則訊息才開始倒數。開啟後，每次工作階段結束就自動送出一則短訊息到一個專用對話，讓下一個工作階段馬上開始倒數。例如睡覺時開著，起床時目前的工作階段很快就會重置，可以連續用到兩個工作階段。"
+    "message": "Gemini 的 5 小時算力循環歸零後，開啟此選項會自動透過 /usage 確認歸零，並在專用對話送出一則短訊息（預設 4 Hydrogen／低），讓下一個工作階段馬上開始倒數。"
   },
   "optAutoResetWarning": {
-    "message": "⚠ 注意：需要 Chrome 保持開啟、電腦不能睡眠（macOS 可在終端機執行 caffeinate -i，或在「電池／能源」設定中避免睡眠）、claude.ai 保持登入。送出時會自動開啟或切換到專用對話，並把 Chrome 視窗帶到最前面（白天也會）。每次送出會用掉少量額度。每週上限已滿時不會送出。連續失敗 3 次會暫停，直到你再次使用 Claude 或重新開啟此設定。"
+    "message": "⚠ 注意：需要 Chrome 保持開啟、電腦不能睡眠（macOS 可在終端機執行 caffeinate -i，或在「電池／能源」設定中避免睡眠）、gemini.google.com 保持登入。送出時會自動開啟或切換到專用對話，並把 Chrome 視窗帶到最前面（白天也會）。每次送出會用掉少量額度。每週上限已滿時不會送出。連續失敗 3 次會暫停，直到你再次使用 Gemini 或重新開啟此設定。"
   },
   "optAutoResetConfirm": {
     "message": "確定要開啟「自動重設」嗎？\n\n每次 5 小時工作階段結束時，會自動在專用對話送出一則訊息，並把 Chrome 視窗帶到最前面。"
@@ -456,40 +450,25 @@
     "message": "使用的模型"
   },
   "optAutoResetModelDesc": {
-    "message": "送出前在專用對話的模型選單切換，只影響這個對話，不會改到你平常的預設模型。專用對話剛建立的那一則會用目前的模型送出，之後才會切換。切換失敗時照樣用目前的模型送出。"
-  },
-  "optModelHaiku": {
-    "message": "Haiku（最省額度）"
-  },
-  "optModelSonnet": {
-    "message": "Sonnet"
-  },
-  "optModelOpus": {
-    "message": "Opus"
+    "message": "送出前嘗試在專用對話的模型選單切換。專用對話剛建立的那一則會用目前的模型送出，之後才會切換。切換失敗或介面無此選項時，會照樣用目前的模型送出。"
   },
   "optModelNone": {
     "message": "不切換"
   },
   "optAutoResetEffort": {
-    "message": "投入程度"
+    "message": "思考程度"
   },
   "optAutoResetEffortDesc": {
-    "message": "對應 claude.ai 模型選單中的「投入程度」"
+    "message": "對應 Gemini 模型選單底部的「思考程度」（預設「低」最快速省額度）"
   },
   "optEffortLow": {
-    "message": "低"
+    "message": "低（快速高效）"
   },
   "optEffortMedium": {
-    "message": "中"
+    "message": "中等（適中）"
   },
   "optEffortHigh": {
-    "message": "高"
-  },
-  "optEffortXhigh": {
-    "message": "超高"
-  },
-  "optEffortMax": {
-    "message": "最高"
+    "message": "高（詳盡）"
   },
   "optEffortNone": {
     "message": "不調整"
@@ -510,7 +489,7 @@
     "message": "自動重設：開啟 · 約 {time} 送出"
   },
   "popupKeepalivePaused": {
-    "message": "自動重設：連續失敗，已暫停（再次使用 Claude 或重新開啟設定後恢復）"
+    "message": "自動重設：連續失敗，已暫停（再次使用 Gemini 或重新開啟設定後恢復）"
   },
   "popupKeepaliveLastError": {
     "message": "上次失敗：{reason}"
@@ -519,19 +498,19 @@
     "message": "自動重設：送出訊息讓下一個工作階段開始倒數"
   },
   "notifyKeepaliveFailedTitle": {
-    "message": "Claude Queue：自動重設未完成"
+    "message": "Gemini Queue：自動重設未完成"
   },
   "notifyKeepaliveFailedBody": {
     "message": "無法送出自動重設訊息（{reason}），稍後會再試一次。"
   },
   "notifyKeepalivePausedBody": {
-    "message": "自動重設連續失敗（{reason}），已暫停。再次使用 Claude 或重新開啟設定後會恢復。"
+    "message": "自動重設連續失敗（{reason}），已暫停。再次使用 Gemini 或重新開啟設定後會恢復。"
   },
   "popupKeepaliveWeeklyFull": {
     "message": "自動重設：每週上限已滿，{time} 重置後再送"
   },
   "popupKeepaliveNoData": {
-    "message": "自動重設：讀不到用量資料，暫時無法判斷（請開著 claude.ai 分頁）"
+    "message": "自動重設：尚未讀到 /usage 用量資料，點右上角 ⟳ 更新"
   },
   "popupKeepaliveSoon": {
     "message": "自動重設：開啟 · 工作階段已歸零，約 {time} 送出"
@@ -552,7 +531,7 @@
     "message": "已到重置時間，正在更新用量…"
   },
   "kaLastCheckNone": {
-    "message": "最後一次檢查：尚無紀錄（開著 claude.ai 分頁幾分鐘後就會有）"
+    "message": "最後一次檢查：尚無紀錄（開著 gemini.google.com 分頁幾分鐘後就會有）"
   },
   "kaLastCheck": {
     "message": "最後一次檢查：{time} · {result}"
@@ -576,7 +555,7 @@
     "message": "每週上限已滿，不送"
   },
   "kaResultNoUsageData": {
-    "message": "讀不到用量資料，無法判斷"
+    "message": "尚未讀到 /usage 用量資料，暫時無法判斷"
   },
   "kaResultCooldown": {
     "message": "10 分鐘內剛嘗試過，稍後再試"
@@ -660,7 +639,7 @@
     "message": "📎 {count} 個附件（{size}）：{names}"
   },
   "notifyUpdateTitle": {
-    "message": "Claude Queue 有新版本"
+    "message": "Gemini Queue 有新版本"
   },
   "notifyUpdateBody": {
     "message": "新版本 v{version} 已推出（目前 v{current}）。點這裡看更新步驟。"
@@ -709,5 +688,29 @@
   },
   "optGuideLink": {
     "message": "新手教學：從安裝到使用"
+  },
+  "usageUnknownOpenGemini": {
+    "message": "尚無用量資料，點右上角 ⟳ 讀取 gemini.google.com/usage"
+  },
+  "usageDomStandby": {
+    "message": "頁面偵測模式 · 目前未見上限提示"
+  },
+  "convGem": {
+    "message": "Gem 新對話"
+  },
+  "optModelHydrogen": {
+    "message": "4 Hydrogen（最省額度）"
+  },
+  "optModelAuto": {
+    "message": "自動（依需求調整）"
+  },
+  "optModelNeon": {
+    "message": "4 Neon（深入分析）"
+  },
+  "optModelCarbon": {
+    "message": "4 Carbon（程式與複雜任務）"
+  },
+  "usageFetchingPage": {
+    "message": "正在讀取 gemini.google.com/usage…"
   }
 }

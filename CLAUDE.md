@@ -1,95 +1,44 @@
-# CLAUDE.md
+# CLAUDE.md / 開發指引
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文件提供在此專案工作的 AI 開發助手（Claude Code / Gemini / Antigravity）架構與維護指引。
 
-## What this is
+## 專案定位
 
-Claude Queue: a Chrome MV3 extension in plain JavaScript (no build step, no dependencies). When claude.ai's 5-hour or weekly usage limit is hit, it intercepts the outgoing message, stores it in a local queue, and restores it (or auto-sends it) after the quota resets. Optional "auto reset" sends a short message when a session ends so the next 5-hour session starts immediately.
+**Gemini Queue**：給 `https://gemini.google.com/*` 使用的 Chrome MV3 擴充功能，純 JavaScript（零依賴、不需建置），改編自原專案 Claude Queue。當 Gemini 的 5 小時算力循環或每週額度達上限時，攔截送出的訊息（含本機附件），存入本機佇列，並在額度重置後協助還原或自動送出。
 
-The UI is Traditional Chinese (`_locales/zh_TW` is the default locale and holds every string). Communicate with the user in Traditional Chinese.
+介面預設語言為繁體中文（`_locales/zh_TW`）。請以繁體中文與使用者溝通。
 
-## Commands
+## 常用指令
 
 ```bash
-node --test test/                                   # service worker tests (Node built-in runner)
-node --test --test-name-pattern="RESTORE_RETRY" test/   # run a single test by name
-for f in $(find src -name '*.js'); do node --check "$f"; done   # syntax check
-python3 -m http.server 8765                         # then open http://localhost:8765/test/harness/index.html
+node --test test/                                   # 執行全部單元與 service worker 測試
+node --test --test-name-pattern="Gemini" test/      # 執行特定測試
+for f in $(find src -name '*.js'); do node --check "$f"; done   # JS 語法檢查
+python3 -m http.server 8765                         # 開啟 http://localhost:8765/test/harness/index.html 跑模擬頁面測試
 ```
 
-- `test/sw.test.js` loads the real `service-worker.js` into a `vm` context with in-memory `chrome.*` stubs. `test/helpers/sw-env.js` is the same environment as a reusable helper (used by `test/attachments.test.js` and `test/update.test.js`; its `fetch` throws unless a test passes one, and `installType`/`version` are options). `test/keepalive.test.js` has its own env with a fake clock. Top-level function declarations in the SW become globals of the `vm` context, so tests can call them directly (`env.ctx.checkForUpdate(...)`). The SW also runs `reconcile()` once at load, so startup work can race with a test's own `onStartup` call.
-- `test/harness/index.html` runs the real content scripts against a fake claude.ai page with a real ProseMirror editor (also startable as the `harness` config in `.claude/launch.json`). A full run takes about 2 minutes; every case should show PASS at the bottom of the page and `window.__done` becomes true. The browser caches the scripts, so after editing them reload with the cache bypassed or you will test stale code. Synthetic events are not `isTrusted`, so the harness drives capture and interception through the test-only hooks `CQ.attachments._record` and `CQ.interceptor._handleSendAttempt`.
-- Popup and options pages call `chrome.*` at load, so they cannot be opened directly in a normal browser tab; previewing them needs a page that defines a `chrome` stub first (none is committed).
-- Load the extension in Chrome via `chrome://extensions` → Developer mode → Load unpacked (pick the repo root), then reload any open claude.ai tabs.
-- `TESTING.md` has the manual checklist. It also explains how to simulate "usage full": settings page → 模擬用量已滿.
+- `test/sw.test.js` 與 `test/helpers/sw-env.js` 使用 Node `vm` 載入真正的 `service-worker.js` 與記憶體 `chrome.*` stub。
+- `test/gemini-adapt.test.js` 測試 Gemini 多帳號 `/u/<n>`、`/app`、`/gem` 路由、中英文上限提示與日期時間解析，以及 DOM-first 快照與可擴充 Provider。
+- `test/harness/index.html` 模擬 `gemini.google.com` 的 DOM（`<input-area-v2>`、`<rich-textarea><div class="ql-editor">`、`<user-query>`、`<uploader-file-preview>`、`<bard-mode-switcher>`），載入真正的 content scripts 跑完所有端對端情境。
 
-## Architecture
+## 架構重點
 
-**Shared code via `globalThis.CQ`.** Everything is a classic script that attaches to `CQ` (`CQ.STORAGE_KEYS`, `CQ.MSG`, `CQ.settings`, `CQ.t`, …). The service worker loads `src/shared/*` with `importScripts`. Popup and options pages load them with `<script>` tags. Content scripts load in the exact order listed in `manifest.json`, and later files depend on earlier ones, so new content files must be inserted in the right position.
+- **共用命名空間 `globalThis.GQ`**：所有模組都是 classic script，掛在 `GQ` 下（`GQ.STORAGE_KEYS`、`GQ.MSG`、`GQ.settings`、`GQ.t`…）。Service worker 以 `importScripts` 載入，popup/options 以 `<script>` 載入，content scripts 嚴格依 `manifest.json` 順序載入。
+- **Service worker 是佇列的唯一寫入者**：所有異動透過 `src/background/service-worker.js` 的 `handlers` 與 `locked()` mutex 序列化處理。
+- **防重複送出核心不變量**：送出前必須取得 `QUEUE_CLAIM` token、已送出 ID 寫入 `sentIds`、`pendingRestore` 只能領取一次、自動模式絕不在非目標對話送出、`uncertain` 狀態標為失敗絕不自動重試。
+- **Gemini 路由處理（`src/shared/text.js`）**：
+  - `conversationKey(url)` 保留 `/u/<index>` 以區隔不同 Google 帳號。
+  - `isNewChatUrl(url)` 去除選用的 `/u/<index>` 後，將 `/`、`/app`、`/gem/<gemId>` 視為新對話起點；`/app/<chatId>` 與 `/gem/<gemId>/<chatId>` 視為既有對話。
+- **DOM 優先用量偵測（`src/content/usage.js`）**：
+  - 預設不發送網路請求（`hasUsageProvider() === false`），掃描 `selectors.limitBanner` 解析上限提示與重置時間；未見上限提示時回傳 `{ source: 'dom', full: null, error: null }`。
+  - 預留 `GQ.usage.setUsageProvider(fn)` 與 `parseUsageResponse(json)`，日後確認內部 RPC 或用量查詢方式後可直接接上百分比條與自動重設。
+- **編輯器與選擇器（`src/content/selectors.js`、`src/content/editor.js`）**：
+  - 針對 `rich-textarea .ql-editor`（Quill）處理 `.ql-blank` 與 `<p><br></p>`，每次變更後觸發 bubbling `input` 事件同步 Angular 狀態。
+  - Gemini 生成回應時可能把 `.send-button` 加上 `.stop` class 或改 `aria-label="Stop response"`，`selectors.isStopButtonElement()` 會在尋找送出鈕時排除停止狀態。
 
-**Service worker is the single writer of the queue.** Every queue mutation goes through a message handler in `src/background/service-worker.js` (the `handlers` map keyed by `CQ.MSG.*`) and is serialized by the `locked()` promise mutex. Content scripts and the popup never write `queue` to storage directly. They send messages, and they read state through `chrome.storage.onChanged`.
+## 設計約束
 
-**Restoring a queued message:**
-1. `alarms` (`cq-reset-check`) fires at the reset time + 30s.
-2. The SW asks a tab for usage (`USAGE_REFRESH`), then runs `markReady` → `openNext` → `openItem`.
-3. `openItem` focuses or creates the tab and writes `pendingRestore`, or sends `RESTORE_START` directly to a tab that is already loaded.
-4. `src/content/restore.js` runs the flow:
-   - verify it is in the right conversation (`conversationKey`)
-   - re-check usage
-   - check for a duplicate message
-   - handle attachments already in the composer, then a text draft already in the editor
-   - re-attach the item's files and wait for their upload to finish
-   - fill the editor
-   - show the confirm bar, or a 3s countdown in auto mode
-   - `QUEUE_CLAIM` (gets a token) → re-check usage and attachments → click send → `QUEUE_MARK_SENT` (with the token)
-
-**Duplicate-send protection is the core invariant:**
-- Sending requires a claim token.
-- Sent ids are recorded in `sentIds`.
-- `pendingRestore` can only be claimed once.
-- Auto mode never sends to a conversation other than the item's own: it reopens the right one, or gives up and notifies.
-- An "uncertain" send is marked failed and never retried.
-
-Keep these guarantees when changing the send path.
-
-**Queue item flags with special handling across SW, restore, and popup:**
-- `draft`: never auto-sent.
-- `newChatGroup` / `awaitRebind`: several messages queued on `/new` are sent in order into the conversation the first one creates.
-- `restoring`: the item is assigned to a tab and must not be opened twice.
-- `keepalive`: an auto-reset message. It is removed instead of being marked failed or waiting, and it is excluded from the badge and from manual `openNext`. State lives in the `keepalive` storage key: `conversationUrl`, `lastSentAt`, `lastKnownEnd`, `failCount`, `lastCheck`, `lastModelSwitch` (shown on the options page even without debug log).
-
-Whether to send an auto-reset message is decided by `CQ.session.keepaliveCheck()` in `src/shared/session.js`, shared by the SW, restore flow and popup. It reads only the usage API buckets, never the page's limit banner: a stale banner stays on an unrefreshed tab after the session ends, and its reset time re-parses as the next day. After a session ends the API may return `five_hour: null`, `{0, null}`, or 100% with a past `resets_at`; all count as idle (`test/keepalive.test.js` covers each).
-
-**Attachments** (`src/content/attachments.js`, `src/background/filestore.js`):
-- Capture: trusted `change` / `drop` / `paste` events record `File` objects as they are attached; `collect()` (synchronous, called by the interceptor) maps each composer attachment card to a recorded file, by filename when visible, else by count. Any mismatch → not queueable.
-- Storage: content sends each file as base64 via `FILE_STAGE`; `QUEUE_ADD` with `attachments: [stageId]` links them to the item, which keeps only metadata (`attachments: [{fileId, name, type, size}]`). Content lives in the extension's IndexedDB (not `chrome.storage`, which caps at 10MB without `unlimitedStorage`). `saveQueue()` runs `fileStore.gc()` after every write, so any removal path deletes the item's files; failed items keep theirs. Tests use the in-memory backend (no `indexedDB` in Node).
-- Restore: files are re-added through the page's `<input type="file">` (fallback: synthetic drop) and must finish uploading before text is filled; `doSend` re-checks. In auto mode, a pre-existing composer attachment, a missing file, or a failed/timeout upload never sends.
-
-**Usage detection** (`src/content/usage.js`) runs in the page with the user's cookies:
-- `GET /api/organizations` → `/api/organizations/{uuid}/usage`, reading `five_hour` / `seven_day` `utilization` and `resets_at`.
-- Falls back to scanning the page for limit text.
-- Snapshots are stored in `usage` and shared by all tabs. The foreground tab polls first.
-
-The `interceptor.js` blocking decision must be synchronous (`preventDefault`), so it relies on the latest snapshot plus the page's limit banner.
-
-**Versions and the user guide** (`src/shared/version.js`, `checkForUpdate` / `handleInstalled` in the SW):
-- Unpacked installs never auto-update, so the SW reads `manifest.json` from GitHub `main` once a day (alarm `cq-update-check`), notifies once per new version (`notifiedVersion`), and the popup shows a notice until dismissed (`UPDATE_DISMISS`). State lives in the `update` storage key. Store installs (`chrome.management.getSelf().installType !== 'development'`) skip all of this.
-- `onInstalled` with reason `install` opens the guide (`CQ.version.GUIDE_URL`); reason `update` with a higher version sets `updatedFrom` for the popup's "已更新到" notice. Reloading in developer mode fires `update` with the same version, which is ignored.
-- The guide is published at https://me.asdtw.org/articles/claude-queue-guide.html (built from `GUIDE.md`, maintained on the user's site, not in this repo). Notifications link to its `#s12` anchor (section 12, updating), so that anchor must stay.
-- Releasing: feature branches are merged into `main` locally (`--no-ff`), then `main` is pushed. Bump `manifest.json` `version` in the same push, or users will not be notified.
-
-## Fragile parts (claude.ai changes)
-
-All DOM selectors live in `src/content/selectors.js`, each as a list of fallbacks; when a selector breaks, add the new one at the front of its list. Entries commented "2026-11 實測" were checked against the live site (composer, attachment cards, remove buttons, upload state, file input). One finding to keep in mind: claude.ai does not disable the send button while an attachment is uploading, so the code waits for the card's `data-state="pending"` / `aria-busy` to clear. `attachmentItem` takes the union of all its candidates (innermost matches only), unlike other groups that use the first candidate with results. The model picker (`modelSelector`, used by `src/content/model.js` to switch the auto-reset conversation to `autoResetModel` / `autoResetEffort`, default Haiku / medium) is a Base UI menu that only opens on the full pointerdown → mousedown → pointerup → mouseup → click sequence; effort levels are matched by position (低/中/高/超高/最高), models by name. Switching on `/new` changes the account-wide default model, while switching inside an existing conversation affects only that conversation, so the restore flow skips switching on `/new` (the first auto-reset message in a new dedicated conversation uses the current model). A failed switch is logged and reported (`keepalive.lastModelSwitch`), and the message is still sent. Endpoint paths and response-field aliases live in `usage.js` (`ENDPOINTS`, `FIELD_ALIASES`). Editor filling (`editor.js`) uses `execCommand('insertText')` first because ProseMirror ignores direct DOM edits. The README section "claude.ai 改版時最容易壞的地方" maps symptoms to files.
-
-## Constraints from the original spec
-
-- Permissions stay minimal: `storage`, `alarms`, `notifications`, host `https://claude.ai/*`.
-- No external servers, no remote code, no data upload. The single exception is the new-version check (`checkForUpdate` in the SW): once a day, only for unpacked/development installs and only while the `updateCheck` setting is on, it GETs the public `manifest.json` on GitHub (`CQ.version.MANIFEST_URL`) with no parameters or cookies. Pushing a higher manifest version to `main` therefore notifies every GitHub user.
-- Never forge or replay claude.ai's internal chat requests. Sending is always done by filling the editor and clicking the real send button.
-- Text plus files the user attached from their computer are queued. Attachments the extension can't capture (Drive/GitHub, long-paste attachments, files attached before the content script loaded) mean the message is left alone. Attachment-only messages (no text) are never queued.
-- Debug logs must not contain message content or attachment file names.
-- New UI strings go in `_locales/zh_TW/messages.json`. They use named `{placeholder}` syntax, substituted by `CQ.t`, not chrome's `$1`.
-- Commits and README credit the project as developed by Claude Opus 5.5, with the `Co-Authored-By` trailer.
-
-`GUIDE.md` is the beginner-facing user guide. `HANDOFF.md` (untracked) is a running Chinese-language log of decisions, unverified risks, and open TODOs. Read it when picking up work.
+- 最小權限：`storage`、`alarms`、`notifications`，host 權限僅 `https://gemini.google.com/*`。
+- 絕不偽造或重放 `gemini.google.com` 的內部聊天請求；一律透過填入編輯器並點擊真實送出按鈕完成。
+- Debug log 嚴禁記錄訊息內文或附件檔名。
+- 所有新增介面文字放入 `_locales/zh_TW/messages.json`（使用 `{placeholder}` 具名佔位符）。

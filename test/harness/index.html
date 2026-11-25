@@ -2,21 +2,22 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<title>Claude Queue restore harness</title>
+<title>Gemini Queue restore harness</title>
 <style>
   body { font: 14px system-ui; margin: 20px; }
-  fieldset { border: 1px solid #ccc; padding: 8px; display: flex; gap: 8px; }
+  input-area-v2 { border: 1px solid #ccc; padding: 8px; display: flex; gap: 8px; align-items: center; }
+  rich-textarea { flex: 1; display: block; }
   #atts { display: flex; gap: 4px; }
-  [data-testid="file-thumbnail"] { border: 1px solid #aaa; padding: 2px 4px; font-size: 12px; }
-  .ProseMirror { flex: 1; min-height: 40px; border: 1px solid #999; padding: 4px; }
-  #msgs div { background: #eef; margin: 4px 0; padding: 4px; white-space: pre-wrap; }
+  uploader-file-preview { border: 1px solid #aaa; padding: 2px 4px; font-size: 12px; display: inline-flex; gap: 4px; }
+  .ql-editor { min-height: 40px; border: 1px solid #999; padding: 4px; }
+  user-query { display: block; background: #e8f0fe; margin: 4px 0; padding: 4px; white-space: pre-wrap; }
   #out { white-space: pre-wrap; font-family: monospace; margin-top: 16px; }
 </style>
 <!--
   用法（從 repo 根目錄）：
     python3 -m http.server 8765
     開啟 http://localhost:8765/test/harness/index.html  → 自動跑完所有情境，結果在頁面底部與 window.__results
-  這是「假的 claude.ai」：只模擬輸入框、送出按鈕、使用者訊息氣泡、停止按鈕與網址切換，
+  這是「假的 gemini.google.com」：模擬 input-area-v2、rich-textarea .ql-editor、送出按鈕、使用者訊息、停止按鈕與網址切換，
   載入的是真正的 content scripts（chrome API 與 service worker 以頁面內 stub 取代）。
 -->
 <script>
@@ -27,7 +28,15 @@
     x.send();
     return JSON.parse(x.responseText);
   })();
-  const mem = { settings: { autoSend: true, notifications: true, pollMinutes: 2 } };
+  const mem = {
+    settings: {
+      autoSend: true,
+      autoResetModel: 'hydrogen',
+      autoResetEffort: 'low',
+      notifications: true,
+      pollMinutes: 2
+    }
+  };
   window.__calls = [];
   window.__swReply = {};
   const swDefault = {
@@ -63,9 +72,15 @@
 </script>
 <script src="/src/shared/constants.js"></script>
 <script>
-  // 測試用：縮短等待時間（其他模組在載入時讀取 CQ.TIMING）
-  CQ.TIMING = Object.freeze({ ...CQ.TIMING, SEND_DETECT_TIMEOUT_MS: 3000, SEND_BUTTON_WAIT_MS: 1500, COMPOSER_WAIT_MS: 3000,
-    ATTACH_APPEAR_WAIT_MS: 800, ATTACH_UPLOAD_WAIT_MS: 3000 });
+  // 測試用：縮短等待時間（其他模組在載入時讀取 GQ.TIMING）
+  GQ.TIMING = Object.freeze({
+    ...GQ.TIMING,
+    SEND_DETECT_TIMEOUT_MS: 3000,
+    SEND_BUTTON_WAIT_MS: 1500,
+    COMPOSER_WAIT_MS: 3000,
+    ATTACH_APPEAR_WAIT_MS: 800,
+    ATTACH_UPLOAD_WAIT_MS: 3000
+  });
 </script>
 <script src="/src/shared/i18n.js"></script>
 <script src="/src/shared/settings.js"></script>
@@ -86,38 +101,44 @@
 <body>
 <div id="msgs"></div>
 <div id="banner"></div>
-<fieldset>
+<input-area-v2>
   <div id="atts"></div>
-  <input type="file" data-testid="file-upload" multiple hidden>
-  <div class="ProseMirror" contenteditable="true"></div>
-  <button aria-label="Send message" disabled>Send</button>
-</fieldset>
+  <input type="file" data-test-id="file-upload" multiple hidden>
+  <rich-textarea>
+    <div class="ql-editor ql-blank" contenteditable="true" role="textbox"><p><br></p></div>
+  </rich-textarea>
+  <bard-mode-switcher></bard-mode-switcher>
+  <button class="send-button" aria-label="Send message" disabled>Send</button>
+</input-area-v2>
 <div id="out">running…</div>
 <script>
-  // ── 假的 claude.ai 行為 ──
-  const ed = document.querySelector('.ProseMirror');
-  const btn = document.querySelector('button[aria-label="Send message"]');
+  // ── 假的 gemini.google.com 行為 ──
+  const ed = document.querySelector('.ql-editor');
+  const btn = document.querySelector('button.send-button');
   const msgs = document.getElementById('msgs');
+  const switcher = document.querySelector('bard-mode-switcher');
   window.fake = { mode: 'normal', attachMode: 'normal', lastSentFiles: null };
   // mode: normal | stale | enterOnly | ignore | clearOnly | markdown
   // attachMode: normal（選檔後顯示卡片，上傳 400ms）| broken（不接受檔案）| stuck（一直上傳中）
   const atts = document.getElementById('atts');
   const fileInput = document.querySelector('input[type=file]');
+
   function addCards(files) {
     for (const f of files) {
-      const card = document.createElement('div');
-      // 和 2026-11 實測的 claude.ai 結構一致：上傳中 data-state="pending" aria-busy="true"，完成後移除
-      card.dataset.testid = 'file-thumbnail';
-      card.setAttribute('data-cds-attachment', '');
-      card.dataset.state = 'pending';
-      card.setAttribute('aria-busy', 'true');
-      card.innerHTML = '<span class="name"></span><button type="button" data-cds-attachment-remove>×</button>';
-      card.querySelector('.name').textContent = f.name;
-      const rm = card.querySelector('button');
+      const card = document.createElement('uploader-file-preview');
+      const spin = document.createElement('div');
+      spin.setAttribute('role', 'progressbar');
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'name';
+      nameSpan.textContent = f.name;
+      const rm = document.createElement('button');
+      rm.type = 'button';
+      rm.textContent = '×';
       rm.setAttribute('aria-label', '移除 ' + f.name);
       rm.addEventListener('click', () => card.remove());
+      card.append(spin, nameSpan, rm);
       atts.appendChild(card);
-      if (fake.attachMode !== 'stuck') setTimeout(() => (delete card.dataset.state, card.removeAttribute('aria-busy')), 400);
+      if (fake.attachMode !== 'stuck') setTimeout(() => spin.remove(), 400);
     }
   }
   fileInput.addEventListener('change', () => {
@@ -126,87 +147,123 @@
   });
   window.userAddFiles = (files) => {
     addCards(files);
-    // 正式環境由 isTrusted 的 change/drop/paste 事件記錄
-    CQ.attachments._record(files, 'test');
+    GQ.attachments._record(files, 'test');
   };
-  const editorText = () => CQ.editor.getText(ed);
-  const syncBtn = () => { btn.disabled = fake.mode === 'stale' || fake.mode === 'enterOnly' || !editorText(); };
+  const editorText = () => GQ.editor.getText(ed);
+  const syncBtn = () => {
+    const txt = editorText();
+    ed.classList.toggle('ql-blank', !txt);
+    btn.disabled = fake.mode === 'stale' || fake.mode === 'enterOnly' || !txt;
+  };
   ed.addEventListener('input', syncBtn);
   new MutationObserver(syncBtn).observe(ed, { childList: true, subtree: true, characterData: true });
 
   function doSend() {
     const text = editorText();
     if (!text || fake.mode === 'ignore') return;
-    fake.lastSentFiles = Array.from(atts.children).map((c) => c.textContent.replace('×', ''));
+    fake.lastSentFiles = Array.from(atts.children).map((c) => c.querySelector('.name').textContent);
     atts.innerHTML = '';
-    ed.innerHTML = '';
+    ed.innerHTML = '<p><br></p>';
     syncBtn();
     if (fake.mode === 'clearOnly') return;
-    const m = document.createElement('div');
-    m.dataset.testid = 'user-message';
-    m.textContent = fake.mode === 'markdown' ? CQ.text.stripMarkdown(text).replace(/(.{10})/g, '$1 ') : text;
-    msgs.appendChild(m);
-    const stop = document.createElement('button');
-    stop.setAttribute('aria-label', 'Stop response');
-    document.body.appendChild(stop);
-    setTimeout(() => stop.remove(), 600);
-    if (CQ.text.isNewChatUrl(location.href)) setTimeout(() => history.pushState({}, '', '/chat/new123'), 300);
+    const uq = document.createElement('user-query');
+    const qt = document.createElement('div');
+    qt.className = 'query-text';
+    qt.textContent = fake.mode === 'markdown' ? GQ.text.stripMarkdown(text).replace(/(.{10})/g, '$1 ') : text;
+    uq.appendChild(qt);
+    msgs.appendChild(uq);
+    // 模擬生成中：按鈕切換為停止狀態，600ms 後恢復
+    btn.classList.add('stop');
+    btn.setAttribute('aria-label', 'Stop response');
+    setTimeout(() => {
+      btn.classList.remove('stop');
+      btn.setAttribute('aria-label', 'Send message');
+    }, 600);
+    if (GQ.text.isNewChatUrl(location.href)) setTimeout(() => history.pushState({}, '', '/app/new123'), 300);
   }
-  btn.addEventListener('click', doSend);
+  btn.addEventListener('click', () => {
+    if (btn.classList.contains('stop')) return;
+    doSend();
+  });
   ed.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && fake.mode !== 'ignore') { e.preventDefault(); doSend(); }
   });
 
-  // ── 假的模型選單（結構同 2026-11 實測的既有對話：主選單只有目前模型，其他在「更多模型」子選單）──
-  // fake.picker = { model: 'Opus 5.5', efforts: { 'Opus 5.5': 2 }, models: [...] } 或 null（沒有選單）
-  const EFFORT_LABELS = ['低', '中', '高', '超高', '最高'];
+  // ── 假的 Gemini 4 模型選單（自動 / 4 Hydrogen / 4 Neon / 4 Carbon ＋ 思考程度：低／中等／高）──
+  const EFFORT_LABELS = ['低 快速高效', '中等 適中', '高 詳盡'];
+  const MODEL_OPTIONS = {
+    Auto: '自動 根據需求調整回覆',
+    Hydrogen: '全天候貼心協助 4 Hydrogen',
+    Neon: '深入分析 4 Neon',
+    Carbon: '程式編寫與複雜任務 4 Carbon'
+  };
   const pickerBtn = document.createElement('button');
   pickerBtn.type = 'button';
-  pickerBtn.dataset.testid = 'model-selector-dropdown';
+  pickerBtn.dataset.testId = 'bard-mode-menu-button';
   pickerBtn.setAttribute('aria-haspopup', 'menu');
   function pickerEffort(p) { return p.efforts[p.model] ?? 1; }
   function syncPicker() {
     const p = fake.picker;
     if (!p) return pickerBtn.remove();
-    if (!pickerBtn.isConnected) document.querySelector('fieldset').appendChild(pickerBtn);
-    const l = p.model + ' ' + EFFORT_LABELS[pickerEffort(p)];
-    pickerBtn.textContent = l;
-    pickerBtn.setAttribute('aria-label', '模型：' + l);
+    if (!pickerBtn.isConnected) switcher.appendChild(pickerBtn);
+    pickerBtn.textContent = p.model === 'Auto' ? '自動' : p.model;
+    pickerBtn.setAttribute('aria-label', `${pickerBtn.textContent} · ${EFFORT_LABELS[pickerEffort(p)].split(' ')[0]}`);
   }
   function closePicker() { document.querySelectorAll('[role=menu]').forEach((m) => m.remove()); }
-  function menuEl() { const m = document.createElement('div'); m.setAttribute('role', 'menu'); document.body.appendChild(m); return m; }
-  function radio(menu, text, checked, onPick) {
-    const e = document.createElement('div');
+  function menuEl() {
+    const m = document.createElement('div');
+    m.className = 'mat-mdc-menu-panel';
+    m.setAttribute('role', 'menu');
+    document.body.appendChild(m);
+    return m;
+  }
+  function radio(menu, text, checked, onPick, locked = false) {
+    const e = document.createElement('button');
+    e.type = 'button';
+    e.className = 'mat-mdc-menu-item';
     e.setAttribute('role', 'menuitemradio');
     e.setAttribute('aria-checked', String(checked));
     e.textContent = text;
-    e.addEventListener('click', () => { onPick(); closePicker(); syncPicker(); });
+    if (locked) {
+      const lk = document.createElement('mat-icon');
+      lk.setAttribute('fonticon', 'lock');
+      e.appendChild(lk);
+    } else {
+      e.addEventListener('click', () => { onPick(); closePicker(); syncPicker(); });
+    }
     menu.appendChild(e);
   }
   function subTrigger(menu, text, build) {
-    const e = document.createElement('div');
+    const e = document.createElement('button');
+    e.type = 'button';
+    e.className = 'mat-mdc-menu-item';
     e.setAttribute('role', 'menuitem');
     e.setAttribute('aria-haspopup', 'menu');
     e.textContent = text;
-    e.addEventListener('click', () => build(menuEl()));
+    e.addEventListener('mouseenter', () => {
+      if (document.querySelectorAll('[role=menu]').length < 2) build(menuEl());
+    });
+    e.addEventListener('click', () => {
+      if (document.querySelectorAll('[role=menu]').length < 2) build(menuEl());
+    });
     menu.appendChild(e);
   }
   pickerBtn.addEventListener('click', () => {
     const p = fake.picker;
     if (document.querySelector('[role=menu]')) return closePicker();
     const main = menuEl();
-    radio(main, p.model + '目前模型', true, () => {});
-    subTrigger(main, '投入程度' + EFFORT_LABELS[pickerEffort(p)], (m) =>
+    p.models.forEach((x) =>
+      radio(main, MODEL_OPTIONS[x] || x, x === p.model, () => (p.model = x), (p.locked || []).includes(x))
+    );
+    subTrigger(main, '思考程度', (m) =>
       EFFORT_LABELS.forEach((l, i) => radio(m, l, i === pickerEffort(p), () => (p.efforts[p.model] = i))));
-    subTrigger(main, '更多模型', (m) =>
-      p.models.filter((x) => x !== p.model).forEach((x) => radio(m, x, false, () => (p.model = x))));
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePicker(); });
-  const defaultPicker = () => ({ model: 'Opus 5.5', efforts: { 'Opus 5.5': 2 }, models: ['Opus 5.5', 'Haiku 5.5', 'Sonnet 5.5'] });
+  const defaultPicker = () => ({ model: 'Neon', efforts: { Neon: 2, Hydrogen: 1 }, models: ['Auto', 'Hydrogen', 'Neon', 'Carbon'], locked: ['Carbon'] });
 
-  // 用量：API 結果由測試指定，DOM 判斷用真正的 detectLimitFromDom
+  // 用量：結構化結果由測試指定，DOM 判斷用真正的 detectLimitFromDom
   window.__api = { session: { pct: 10 }, weekly: { pct: 10 }, extras: [] };
-  CQ.usage.getStatus = async () => CQ.usage.buildSnapshot(window.__api, CQ.usage.detectLimitFromDom(), null);
+  GQ.usage.getStatus = async () => GQ.usage.buildSnapshot(window.__api, GQ.usage.detectLimitFromDom(), null);
 
   // ── 測試情境 ──
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -214,8 +271,8 @@
   async function waitIdle(timeout = 20000) {
     const end = Date.now() + timeout;
     await sleep(100);
-    while (CQ.restore.getCurrentId() && Date.now() < end) await sleep(100);
-    await sleep(700); // continueWithNext / check
+    while (GQ.restore.getCurrentId() && Date.now() < end) await sleep(100);
+    await sleep(700);
   }
   async function reset(path, { mode = 'normal', draft = '', banner = false } = {}) {
     await waitIdle();
@@ -229,13 +286,13 @@
     window.__swReply = {};
     window.__api = { session: { pct: 10 }, weekly: { pct: 10 }, extras: [] };
     msgs.innerHTML = '';
-    ed.innerHTML = draft ? `<p>${draft}</p>` : '';
+    ed.innerHTML = draft ? `<p>${draft}</p>` : '<p><br></p>';
     syncBtn();
     document.getElementById('banner').innerHTML = banner
-      ? '<div role="alert">You have reached your usage limit. Your limit resets at 3:00 PM</div>'
+      ? '<rate-limit-banner role="alert">You\'ve reached your limit on Gemini Pro until 3:00 PM</rate-limit-banner>'
       : '';
     history.pushState({}, '', path);
-    await sleep(700); // 讓 main.js 的換頁偵測先跑完
+    await sleep(700);
     window.__calls = [];
   }
   const types = () => __calls.map((c) => c.type);
@@ -250,75 +307,75 @@
       return n ? { ok: true, file: { name: n, type: 'image/png', size: 10, lastModified: 1, data: btoa('data:' + n) } } : { ok: false };
     };
   }
-  const item = (over = {}) => ({ id: 'x' + Math.random().toString(36).slice(2, 7), text: 'hello world', url: origin + '/chat/aaa', ...over });
+  const item = (over = {}) => ({ id: 'x' + Math.random().toString(36).slice(2, 7), text: 'hello world', url: origin + '/app/aaa', ...over });
 
   const scenarios = {
     async autoHappyPath() {
-      await reset('/chat/aaa');
-      CQ.restore.start(item(), 'auto');
+      await reset('/app/aaa');
+      GQ.restore.start(item(), 'auto');
       await waitIdle();
       return { pass: lastMsg() === 'hello world' && !!call('queue:markSent') && types().includes('restore:done'), types: types() };
     },
     async navigateDuringCountdown() {
-      await reset('/chat/aaa');
-      CQ.restore.start(item(), 'auto');
+      await reset('/app/aaa');
+      GQ.restore.start(item(), 'auto');
       await sleep(1200);
-      history.pushState({}, '', '/chat/bbb');
+      history.pushState({}, '', '/app/bbb');
       await waitIdle();
       return { pass: lastMsg() === null && !!call('restore:reopen') && !call('queue:markSent'), types: types() };
     },
     async wrongConversationAtStart() {
-      await reset('/chat/zzz');
-      CQ.restore.start(item(), 'auto');
+      await reset('/app/zzz');
+      GQ.restore.start(item(), 'auto');
       await waitIdle();
       return { pass: lastMsg() === null && !!call('restore:reopen') && !call('queue:claim'), types: types() };
     },
     async staleLimitBanner() {
-      await reset('/chat/aaa', { banner: true });
-      CQ.restore.start(item(), 'auto');
+      await reset('/app/aaa', { banner: true });
+      GQ.restore.start(item(), 'auto');
       await waitIdle();
       const r = call('restore:retry');
       return { pass: lastMsg() === null && r && r.reason === 'stale-limit', types: types() };
     },
     async realLimitStillFull() {
-      await reset('/chat/aaa');
+      await reset('/app/aaa');
       window.__api = { session: { pct: 100, resetsAt: Date.now() + 3600e3 }, weekly: { pct: 10 }, extras: [] };
-      CQ.restore.start(item(), 'auto');
+      GQ.restore.start(item(), 'auto');
       await waitIdle();
       window.__api = { session: { pct: 10 }, weekly: { pct: 10 }, extras: [] };
       const r = call('queue:release');
       return { pass: lastMsg() === null && r && r.status === 'waiting', types: types() };
     },
     async disabledButtonEnterFallback() {
-      await reset('/chat/aaa', { mode: 'enterOnly' });
-      CQ.restore.start(item(), 'auto');
+      await reset('/app/aaa', { mode: 'enterOnly' });
+      GQ.restore.start(item(), 'auto');
       await waitIdle();
       return { pass: lastMsg() === 'hello world' && !!call('queue:markSent'), types: types() };
     },
     async nothingHappensSafeRetry() {
-      await reset('/chat/aaa', { mode: 'ignore' });
-      CQ.restore.start(item(), 'auto');
+      await reset('/app/aaa', { mode: 'ignore' });
+      GQ.restore.start(item(), 'auto');
       await waitIdle();
       const r = call('restore:retry');
       return { pass: lastMsg() === null && r && r.reason === 'not-sent' && !call('queue:markFailed'), types: types() };
     },
     async uncertainNoRetry() {
-      await reset('/chat/aaa', { mode: 'clearOnly' });
-      CQ.restore.start(item(), 'auto');
+      await reset('/app/aaa', { mode: 'clearOnly' });
+      GQ.restore.start(item(), 'auto');
       await waitIdle();
       const g = call('restore:giveUp');
       return { pass: g && g.reason === 'uncertain' && !call('restore:retry'), types: types() };
     },
     async markdownDetected() {
-      await reset('/chat/aaa', { mode: 'markdown' });
-      CQ.restore.start(item({ text: '# Title\n- **bold** item\n- `code` here' }), 'auto');
+      await reset('/app/aaa', { mode: 'markdown' });
+      GQ.restore.start(item({ text: '# Title\n- **bold** item\n- `code` here' }), 'auto');
       await waitIdle();
       const s = call('queue:markSent');
       return { pass: s && s.confidence === 'strong', types: types(), confidence: s && s.confidence };
     },
     async draftSavedThenSent() {
-      await reset('/chat/aaa', { draft: 'my own draft' });
-      CQ.restore.start(item(), 'auto');
+      await reset('/app/aaa', { draft: 'my own draft' });
+      GQ.restore.start(item(), 'auto');
       await waitIdle();
       const add = call('queue:add');
       return {
@@ -327,91 +384,92 @@
       };
     },
     async newChatGroupRebind() {
-      await reset('/new');
-      CQ.restore.start(item({ url: origin + '/new', newChatGroup: 'G' }), 'auto');
+      await reset('/app');
+      GQ.restore.start(item({ url: origin + '/app', newChatGroup: 'G' }), 'auto');
       await waitIdle();
       const rb = call('queue:rebind');
-      return { pass: rb && rb.group === 'G' && rb.url === origin + '/chat/new123', types: types() };
+      return { pass: rb && rb.group === 'G' && rb.url === origin + '/app/new123', types: types() };
     },
     async busyTabRejectsSecondStart() {
-      await reset('/chat/aaa');
-      const a = CQ.restore.start(item(), 'auto');
-      const b = CQ.restore.start(item(), 'auto');
+      await reset('/app/aaa');
+      const a = GQ.restore.start(item(), 'auto');
+      const b = GQ.restore.start(item(), 'auto');
       await waitIdle();
       return { pass: a === true && b === false && __calls.filter((c) => c.type === 'queue:markSent').length === 1, types: types() };
     },
     // ── 自動重設 ──
     async keepaliveSendsDespiteStaleBanner() {
-      // 睡前碰到上限，頁面殘留舊的上限提示；API 顯示工作階段已結束（five_hour: null）
-      await reset('/chat/aaa', { banner: true });
+      await reset('/app/aaa', { banner: true });
       window.__api = { session: null, weekly: { pct: 30, resetsAt: Date.now() + 50 * 3600e3 }, extras: [] };
-      CQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
+      GQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
       await waitIdle();
       window.__api = { session: { pct: 10 }, weekly: { pct: 10 }, extras: [] };
       return { pass: lastMsg() === 'Hello World!' && !!call('queue:markSent') && !call('restore:retry'), types: types() };
     },
     async keepaliveIgnoresDuplicateInDedicatedChat() {
-      await reset('/chat/aaa');
-      const prev = document.createElement('div');
-      prev.dataset.testid = 'user-message';
-      prev.textContent = 'Hello World!';
+      await reset('/app/aaa');
+      const prev = document.createElement('user-query');
+      const qt = document.createElement('div');
+      qt.className = 'query-text';
+      qt.textContent = 'Hello World!';
+      prev.appendChild(qt);
       msgs.appendChild(prev);
       window.__api = { session: { pct: 0, resetsAt: null }, weekly: { pct: 30 }, extras: [] };
-      CQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
+      GQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
       await waitIdle();
       window.__api = { session: { pct: 10 }, weekly: { pct: 10 }, extras: [] };
       return { pass: msgs.children.length === 2 && !!call('queue:markSent') && !call('restore:giveUp'), types: types() };
     },
     async keepaliveSkipsWhenSessionActive() {
-      await reset('/chat/aaa');
+      await reset('/app/aaa');
       window.__api = { session: { pct: 5, resetsAt: Date.now() + 4 * 3600e3 }, weekly: { pct: 30 }, extras: [] };
-      CQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
+      GQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
       await waitIdle();
       window.__api = { session: { pct: 10 }, weekly: { pct: 10 }, extras: [] };
       return { pass: lastMsg() === null && !!call('queue:delete') && !call('queue:claim'), types: types() };
     },
     async keepaliveNewChatBindsUrl() {
-      await reset('/new');
+      await reset('/app');
       window.__api = { session: null, weekly: { pct: 30 }, extras: [] };
-      CQ.restore.start(item({ text: 'Hello World!', keepalive: true, url: origin + '/new' }), 'auto');
+      GQ.restore.start(item({ text: 'Hello World!', keepalive: true, url: origin + '/app' }), 'auto');
       await waitIdle();
       window.__api = { session: { pct: 10 }, weekly: { pct: 10 }, extras: [] };
       const b = call('keepalive:bound');
-      return { pass: lastMsg() === 'Hello World!' && b && /\/chat\/new123$/.test(b.url), types: types() };
+      return { pass: lastMsg() === 'Hello World!' && b && /\/app\/new123$/.test(b.url), types: types() };
     },
     async keepaliveSwitchesModel() {
-      await reset('/chat/aaa');
+      await reset('/app/aaa');
       fake.picker = defaultPicker();
       syncPicker();
       window.__api = { session: null, weekly: { pct: 30 }, extras: [] };
-      CQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
+      GQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
       await waitIdle();
       window.__api = { session: { pct: 10 }, weekly: { pct: 10 }, extras: [] };
       const r = call('keepalive:model');
       const label = pickerBtn.getAttribute('aria-label');
       return {
-        pass: lastMsg() === 'Hello World!' && r && r.ok === true && label === '模型：Haiku 5.5 中' && !document.querySelector('[role=menu]'),
+        pass: lastMsg() === 'Hello World!' && r && r.ok === true && label === 'Hydrogen · 低' && !document.querySelector('[role=menu]'),
         label, r, types: types()
       };
     },
-    async keepaliveAlreadyHaikuSetsEffort() {
-      await reset('/chat/aaa');
-      fake.picker = { ...defaultPicker(), model: 'Haiku 5.5', efforts: { 'Haiku 5.5': 3 } };
+    async keepaliveAlreadyHydrogenSetsEffort() {
+      await reset('/app/aaa');
+      fake.picker = { ...defaultPicker(), model: 'Hydrogen', efforts: { Hydrogen: 2 } };
       syncPicker();
       window.__api = { session: null, weekly: { pct: 30 }, extras: [] };
-      CQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
+      GQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
       await waitIdle();
       window.__api = { session: { pct: 10 }, weekly: { pct: 10 }, extras: [] };
       const r = call('keepalive:model');
       const label = pickerBtn.getAttribute('aria-label');
-      return { pass: lastMsg() === 'Hello World!' && r && r.ok && label === '模型：Haiku 5.5 中', label, types: types() };
+      return { pass: lastMsg() === 'Hello World!' && r && r.ok && label === 'Hydrogen · 低', label, types: types() };
     },
     async keepaliveModelMissingStillSends() {
-      await reset('/chat/aaa');
-      fake.picker = { ...defaultPicker(), models: ['Opus 5.5', 'Sonnet 5.5'] };
+      await reset('/app/aaa');
+      fake.picker = { ...defaultPicker(), models: ['Auto', 'Neon'] };
       syncPicker();
       window.__api = { session: null, weekly: { pct: 30 }, extras: [] };
-      CQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
+      GQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
       await waitIdle();
       window.__api = { session: { pct: 10 }, weekly: { pct: 10 }, extras: [] };
       const r = call('keepalive:model');
@@ -420,66 +478,79 @@
         r, types: types()
       };
     },
-    async keepaliveNoPickerStillSends() {
-      await reset('/chat/aaa');
+    async keepaliveLockedModelStillSends() {
+      await reset('/app/aaa');
+      fake.picker = { ...defaultPicker(), locked: ['Hydrogen', 'Carbon'] };
+      syncPicker();
       window.__api = { session: null, weekly: { pct: 30 }, extras: [] };
-      CQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
+      GQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
+      await waitIdle();
+      window.__api = { session: { pct: 10 }, weekly: { pct: 10 }, extras: [] };
+      const r = call('keepalive:model');
+      return {
+        pass: lastMsg() === 'Hello World!' && !!call('queue:markSent') && r && r.ok === false && r.reason === 'model-locked' && !document.querySelector('[role=menu]'),
+        r, types: types()
+      };
+    },
+    async keepaliveNoPickerStillSends() {
+      await reset('/app/aaa');
+      window.__api = { session: null, weekly: { pct: 30 }, extras: [] };
+      GQ.restore.start(item({ text: 'Hello World!', keepalive: true }), 'auto');
       await waitIdle();
       window.__api = { session: { pct: 10 }, weekly: { pct: 10 }, extras: [] };
       const r = call('keepalive:model');
       return { pass: lastMsg() === 'Hello World!' && r && r.reason === 'no-selector', r, types: types() };
     },
     async keepaliveNewChatDoesNotSwitch() {
-      // 在 /new 切換會改到全域預設模型 → 不切
-      await reset('/new');
+      await reset('/app');
       fake.picker = defaultPicker();
       syncPicker();
       window.__api = { session: null, weekly: { pct: 30 }, extras: [] };
-      CQ.restore.start(item({ text: 'Hello World!', keepalive: true, url: origin + '/new' }), 'auto');
+      GQ.restore.start(item({ text: 'Hello World!', keepalive: true, url: origin + '/app' }), 'auto');
       await waitIdle();
       window.__api = { session: { pct: 10 }, weekly: { pct: 10 }, extras: [] };
       const r = call('keepalive:model');
       const label = pickerBtn.getAttribute('aria-label');
-      return { pass: lastMsg() === 'Hello World!' && r && r.reason === 'new-chat' && label === '模型：Opus 5.5 高', label, types: types() };
+      return { pass: lastMsg() === 'Hello World!' && r && r.reason === 'new-chat' && label === 'Neon · 高', label, types: types() };
     },
     async regularItemDoesNotTouchModel() {
-      await reset('/chat/aaa');
+      await reset('/app/aaa');
       fake.picker = defaultPicker();
       syncPicker();
-      CQ.restore.start(item(), 'auto');
+      GQ.restore.start(item(), 'auto');
       await waitIdle();
       const label = pickerBtn.getAttribute('aria-label');
-      return { pass: lastMsg() === 'hello world' && !call('keepalive:model') && label === '模型：Opus 5.5 高', label, types: types() };
+      return { pass: lastMsg() === 'hello world' && !call('keepalive:model') && label === 'Neon · 高', label, types: types() };
     },
     // ── 附件 ──
     async collectMatchesTracked() {
-      await reset('/chat/aaa');
+      await reset('/app/aaa');
       userAddFiles([mkFile('one.png'), mkFile('two.pdf')]);
-      const r = CQ.attachments.collect();
+      const r = GQ.attachments.collect();
       return { pass: r.ok && r.files.map((f) => f.name).join() === 'one.png,two.pdf', r };
     },
     async collectAfterUserRemovedOne() {
-      await reset('/chat/aaa');
+      await reset('/app/aaa');
       userAddFiles([mkFile('one.png'), mkFile('two.pdf')]);
       atts.firstElementChild.remove();
-      const r = CQ.attachments.collect();
+      const r = GQ.attachments.collect();
       return { pass: r.ok && r.files.map((f) => f.name).join() === 'two.pdf', r };
     },
     async collectRejectsUntrackedCard() {
-      await reset('/chat/aaa');
+      await reset('/app/aaa');
       userAddFiles([mkFile('one.png')]);
-      addCards([{ name: 'from-drive.pdf' }]); // 例如 Google Drive 附件：頁面上有卡片，但沒有 File
-      const r = CQ.attachments.collect();
+      addCards([{ name: 'from-drive.pdf' }]);
+      const r = GQ.attachments.collect();
       return { pass: !r.ok && r.reason === 'untracked', r };
     },
     async interceptQueuesTextWithFiles() {
-      await reset('/chat/aaa', { draft: 'see attached', banner: true });
+      await reset('/app/aaa', { draft: 'see attached', banner: true });
       window.__api = { session: { pct: 100, resetsAt: Date.now() + 3600e3 }, weekly: { pct: 10 }, extras: [] };
       let n = 0;
       window.__swReply['file:stage'] = () => ({ ok: true, id: 'S' + n++ });
       userAddFiles([mkFile('one.png'), mkFile('two.pdf')]);
       const ev = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true });
-      CQ.interceptor._handleSendAttempt(ev, 'enter');
+      GQ.interceptor._handleSendAttempt(ev, 'enter');
       await sleep(1500);
       const add = call('queue:add');
       const stages = __calls.filter((c) => c.type === 'file:stage');
@@ -495,26 +566,26 @@
       };
     },
     async interceptNoQueueWhenStageFails() {
-      await reset('/chat/aaa', { draft: 'see attached', banner: true });
+      await reset('/app/aaa', { draft: 'see attached', banner: true });
       window.__api = { session: { pct: 100, resetsAt: Date.now() + 3600e3 }, weekly: { pct: 10 }, extras: [] };
       window.__swReply['file:stage'] = () => ({ ok: false, error: 'storage-full' });
       userAddFiles([mkFile('one.png')]);
-      CQ.interceptor._handleSendAttempt(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }), 'enter');
+      GQ.interceptor._handleSendAttempt(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }), 'enter');
       await sleep(1200);
       return { pass: !call('queue:add') && editorText() === 'see attached' && atts.children.length === 1, types: types() };
     },
     async interceptLetsUntrackedThrough() {
-      await reset('/chat/aaa', { draft: 'see attached', banner: true });
+      await reset('/app/aaa', { draft: 'see attached', banner: true });
       addCards([{ name: 'from-drive.pdf' }]);
       const ev = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true });
-      CQ.interceptor._handleSendAttempt(ev, 'enter');
+      GQ.interceptor._handleSendAttempt(ev, 'enter');
       await sleep(300);
       return { pass: !ev.defaultPrevented && !call('file:stage') && !call('queue:add'), types: types() };
     },
     async restoreAutoWithFiles() {
-      await reset('/chat/aaa');
+      await reset('/app/aaa');
       serveFiles(['one.png', 'two.pdf']);
-      CQ.restore.start(fileItem(['one.png', 'two.pdf']), 'auto');
+      GQ.restore.start(fileItem(['one.png', 'two.pdf']), 'auto');
       await waitIdle();
       return {
         pass: lastMsg() === 'hello world' && !!call('queue:markSent') && (fake.lastSentFiles || []).join() === 'one.png,two.pdf',
@@ -523,35 +594,35 @@
       };
     },
     async restoreAutoAttachBroken() {
-      await reset('/chat/aaa');
+      await reset('/app/aaa');
       fake.attachMode = 'broken';
       serveFiles(['one.png']);
-      CQ.restore.start(fileItem(['one.png']), 'auto');
+      GQ.restore.start(fileItem(['one.png']), 'auto');
       await waitIdle();
       const r = call('restore:retry');
       return { pass: lastMsg() === null && r && r.reason === 'attach-failed' && !call('queue:claim'), types: types() };
     },
     async restoreAutoUploadStuck() {
-      await reset('/chat/aaa');
+      await reset('/app/aaa');
       fake.attachMode = 'stuck';
       serveFiles(['one.png']);
-      CQ.restore.start(fileItem(['one.png']), 'auto');
+      GQ.restore.start(fileItem(['one.png']), 'auto');
       await waitIdle();
       const r = call('restore:retry');
       return { pass: lastMsg() === null && r && r.reason === 'attach-failed' && !call('queue:claim'), types: types() };
     },
     async restoreAutoFilesMissing() {
-      await reset('/chat/aaa');
+      await reset('/app/aaa');
       serveFiles([]);
-      CQ.restore.start(fileItem(['one.png']), 'auto');
+      GQ.restore.start(fileItem(['one.png']), 'auto');
       await waitIdle();
       const g = call('restore:giveUp');
       return { pass: lastMsg() === null && g && g.reason === 'attachments-missing', types: types() };
     },
     async restoreAutoComposerHasAttachments() {
-      await reset('/chat/aaa');
+      await reset('/app/aaa');
       addCards([{ name: 'mine.png' }]);
-      CQ.restore.start(item(), 'auto'); // 純文字項目也不能和你的附件一起送出
+      GQ.restore.start(item(), 'auto');
       await waitIdle();
       const g = call('restore:giveUp');
       return { pass: lastMsg() === null && g && g.reason === 'composer-has-attachments' && !call('queue:add'), types: types() };

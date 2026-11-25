@@ -3,9 +3,9 @@
  * 一律透過頁面按鈕操作，等同使用者自己按，不重放任何網路請求。
  */
 (function (root) {
-  const CQ = (root.CQ = root.CQ || {});
-  const log = CQ.logger.createLogger('sender');
-  const { TIMING } = CQ;
+  const GQ = (root.GQ = root.GQ || {});
+  const log = GQ.logger.createLogger('sender');
+  const { TIMING } = GQ;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ───────────── service worker 訊息 ─────────────
@@ -21,18 +21,18 @@
     } catch (e) {
       if (/context invalidated|Receiving end does not exist/i.test(e.message)) {
         contextInvalidated = /context invalidated/i.test(e.message);
-        if (contextInvalidated) CQ.ui.toast(CQ.t('toastExtensionReloaded'), { kind: 'warn', duration: 0 });
+        if (contextInvalidated) GQ.ui.toast(GQ.t('toastExtensionReloaded'), { kind: 'warn', duration: 0 });
       }
       throw e;
     }
   }
 
-  CQ.bg = { send: bgSend };
+  GQ.bg = { send: bgSend };
 
   // ───────────── 對話中的使用者訊息 ─────────────
 
   function userMessages() {
-    return CQ.selectors.findAll('userMessage');
+    return GQ.selectors.findAll('userMessage');
   }
 
   function messageText(el) {
@@ -46,15 +46,15 @@
 
   /** 最近 3 則使用者訊息中是否已有相同內容（只在本機比對，不保存） */
   function findDuplicateInConversation(text) {
-    const target = CQ.text.normalizeForCompare(text);
+    const target = GQ.text.normalizeForCompare(text);
     return userMessages()
       .slice(-3)
       .some((el) => {
-        const t = CQ.text.normalizeForCompare(messageText(el));
+        const t = GQ.text.normalizeForCompare(messageText(el));
         if (!t) return false;
         if (t === target) return true;
         const lenOk = Math.abs(t.length - target.length) <= Math.max(5, target.length * 0.1);
-        return lenOk && CQ.text.textStartsMatch(t, target, 500);
+        return lenOk && GQ.text.textStartsMatch(t, target, 500);
       });
   }
 
@@ -68,17 +68,17 @@
     const end = Date.now() + timeoutMs;
     let btn = null;
     while (Date.now() < end) {
-      btn = CQ.selectors.getSendButton();
+      btn = GQ.selectors.getSendButton();
       if (isEnabled(btn)) return btn;
       await sleep(100);
     }
-    if (!btn) CQ.selectors.reportMissing('sendButton');
+    if (!btn) GQ.selectors.reportMissing('sendButton');
     return null;
   }
 
-  /** 備援：對輸入框送 Enter（ProseMirror 的 keymap 會處理；interceptor 忽略非 trusted 事件） */
+  /** 備援：對輸入框送 Enter（編輯器 會處理；interceptor 忽略非 trusted 事件） */
   function pressEnter() {
-    const editor = CQ.editor.getEditor();
+    const editor = GQ.editor.getEditor();
     if (!editor) return false;
     editor.focus();
     const init = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
@@ -97,7 +97,7 @@
   async function clickSendAndConfirm(text) {
     const btn = await waitForEnabledSendButton();
     const before = snapshotMessages();
-    CQ.interceptor.allowNextSend(); // 不要攔截我們自己觸發的送出
+    GQ.interceptor.allowNextSend(); // 不要攔截我們自己觸發的送出
     if (btn) {
       btn.click();
       log.info('send button clicked', { beforeCount: before.count });
@@ -121,18 +121,18 @@
       const msgs = userMessages();
       const last = msgs[msgs.length - 1];
       const isNewLast = last && last !== before.lastEl;
-      if (isNewLast && CQ.text.renderedMatches(messageText(last), text)) {
+      if (isNewLast && GQ.text.renderedMatches(messageText(last), text)) {
         return { ok: true, confidence: 'strong' };
       }
-      const started = !!CQ.selectors.find('stopButton') || location.href !== before.url;
+      const started = !!GQ.selectors.find('stopButton') || location.href !== before.url;
       // 弱判斷 1：多了一則使用者訊息且輸入框已清空（Markdown 渲染後文字對不上的情況）
-      // 弱判斷 2：選擇器失效（找不到任何訊息），輸入框已清空，且開始生成回應或網址變了（/new → /chat/...）
+      // 弱判斷 2：選擇器失效（找不到任何訊息），輸入框已清空，且開始生成回應或網址變了（/app → /app/...）
       const weakSignal =
-        CQ.editor.isEmpty() && ((isNewLast && msgs.length > before.count) || (!msgs.length && started));
+        GQ.editor.isEmpty() && ((isNewLast && msgs.length > before.count) || (!msgs.length && started));
       if (weakSignal) {
         if (!weakSince) weakSince = Date.now();
         if (Date.now() - weakSince > 1000) {
-          if (!msgs.length) CQ.selectors.reportMissing('userMessage');
+          if (!msgs.length) GQ.selectors.reportMissing('userMessage');
           return { ok: true, confidence: 'weak' };
         }
       } else {
@@ -142,19 +142,19 @@
     // 逾時：文字仍完整留在輸入框、沒有新訊息、也沒開始生成 → 確定沒送出
     const msgs = userMessages();
     const untouched =
-      CQ.text.sameText(CQ.editor.getText(), text) &&
+      GQ.text.sameText(GQ.editor.getText(), text) &&
       msgs.length === before.count &&
-      !CQ.selectors.find('stopButton') &&
-      CQ.text.conversationKey(location.href) === CQ.text.conversationKey(before.url);
+      !GQ.selectors.find('stopButton') &&
+      GQ.text.conversationKey(location.href) === GQ.text.conversationKey(before.url);
     if (untouched) return { ok: false, error: 'not-sent', safeToRetry: true };
     return { ok: false, error: 'uncertain', safeToRetry: false };
   }
 
-  /** 新對話送出後，等網址從 /new 變成 /chat/<id>（取得新對話網址） */
+  /** 新對話送出後，等網址從 /app 變成 /app/<id>（取得新對話網址） */
   async function waitForConversationUrl(timeoutMs = TIMING.NEW_CHAT_URL_WAIT_MS) {
     const end = Date.now() + timeoutMs;
     while (Date.now() < end) {
-      if (!CQ.text.isNewChatUrl(location.href)) return location.href;
+      if (!GQ.text.isNewChatUrl(location.href)) return location.href;
       await sleep(250);
     }
     return null;
@@ -165,14 +165,14 @@
     let clearCount = 0;
     await sleep(1000);
     while (Date.now() < end) {
-      if (CQ.selectors.find('stopButton')) clearCount = 0;
+      if (GQ.selectors.find('stopButton')) clearCount = 0;
       else if (++clearCount >= 3) return true;
       await sleep(700);
     }
     return false;
   }
 
-  CQ.sender = {
+  GQ.sender = {
     snapshotMessages,
     findDuplicateInConversation,
     clickSendAndConfirm,

@@ -2,14 +2,14 @@
  * Options：自動送出、通知、輪詢頻率、debug log、模擬用量已滿、清除所有資料。
  */
 (function () {
-  const { STORAGE_KEYS: K, MSG } = CQ;
-  const t = CQ.t;
+  const { STORAGE_KEYS: K, MSG } = GQ;
+  const t = GQ.t;
   const $ = (id) => document.getElementById(id);
 
-  CQ.i18n.applyI18n(document);
+  GQ.i18n.applyI18n(document);
   document.title = t('optionsTitle');
   $('version').textContent = 'v' + chrome.runtime.getManifest().version;
-  $('guideLink').href = CQ.version.GUIDE_URL;
+  $('guideLink').href = GQ.version.GUIDE_URL;
   $('guideLink').textContent = t('optGuideLink');
 
   let savedTimer = null;
@@ -36,7 +36,7 @@
     renderSimulateStatus(s);
   }
 
-  function renderSimulateStatus(s = CQ.settings.get()) {
+  function renderSimulateStatus(s = GQ.settings.get()) {
     const el = $('simulateStatus');
     if (!s.debugSimulate) {
       el.textContent = '';
@@ -45,12 +45,12 @@
     const left = s.debugSimulateUntil - Date.now();
     el.textContent =
       left > 0
-        ? t('optSimulateActive', { time: CQ.i18n.formatClock(s.debugSimulateUntil), countdown: CQ.i18n.formatCountdown(left) })
+        ? t('optSimulateActive', { time: GQ.i18n.formatClock(s.debugSimulateUntil), countdown: GQ.i18n.formatCountdown(left) })
         : t('optSimulateEnded');
   }
 
   async function save(patch) {
-    const s = await CQ.settings.update(patch);
+    const s = await GQ.settings.update(patch);
     render(s);
     flashSaved();
   }
@@ -86,7 +86,7 @@
   });
   $('debugSimulateMinutes').addEventListener('change', (e) => {
     const minutes = Number(e.target.value) || 2;
-    const s = CQ.settings.get();
+    const s = GQ.settings.get();
     save({
       debugSimulateMinutes: minutes,
       debugSimulateUntil: s.debugSimulate ? Date.now() + minutes * 60000 : 0
@@ -121,7 +121,7 @@
       time: new Date(c.at).toLocaleString(),
       result: t(CHECK_RESULT_KEYS[c.result] || 'kaResultUnknown', { result: c.result })
     });
-    if (c.endAt) text += ' · ' + t('kaSessionEnd', { time: CQ.i18n.formatClock(c.endAt) });
+    if (c.endAt) text += ' · ' + t('kaSessionEnd', { time: GQ.i18n.formatClock(c.endAt) });
     if (st.lastSentAt) text += ' · ' + t('kaLastSent', { time: new Date(st.lastSentAt).toLocaleString() });
     const m = st.lastModelSwitch;
     if (m) {
@@ -158,7 +158,7 @@
     const time = new Date(st.checkedAt).toLocaleString();
     const current = chrome.runtime.getManifest().version;
     if (st.error) el.textContent = t('optUpdateError', { time, error: st.error });
-    else if (st.latest && CQ.version.compare(st.latest, current) > 0)
+    else if (st.latest && GQ.version.compare(st.latest, current) > 0)
       el.textContent = t('optUpdateNewer', { time, version: st.latest });
     else el.textContent = t('optUpdateLatest', { time, version: st.latest || current });
   }
@@ -187,9 +187,9 @@
   $('refreshLogs').addEventListener('click', loadLogs);
   $('copyLogs').addEventListener('click', async () => {
     const header = [
-      `Claude Queue ${chrome.runtime.getManifest().version}`,
+      `Gemini Queue ${chrome.runtime.getManifest().version}`,
       navigator.userAgent,
-      `settings: ${JSON.stringify(CQ.settings.get())}`,
+      `settings: ${JSON.stringify(GQ.settings.get())}`,
       '---'
     ].join('\n');
     try {
@@ -207,7 +207,7 @@
   $('clearAll').addEventListener('click', async () => {
     if (!confirm(t('optClearAllConfirm'))) return;
     await chrome.runtime.sendMessage({ type: MSG.CLEAR_ALL });
-    render(await CQ.settings.load());
+    render(await GQ.settings.load());
     loadLogs();
     flashSaved(t('optCleared'));
   });
@@ -215,9 +215,9 @@
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes[K.LOGS]) loadLogs();
   });
-  CQ.settings.onChange(render);
+  GQ.settings.onChange(render);
 
-  CQ.settings.load().then(render);
+  GQ.settings.load().then(render);
   loadLogs();
   setInterval(() => renderSimulateStatus(), 1000);
 })();

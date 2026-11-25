@@ -1,25 +1,32 @@
 /*
- * ⚠️ claude.ai 改版時可能需要修改的檔案。
+ * ⚠️ gemini.google.com 改版時可能需要修改的檔案。
  *
- * 自動重設送出前，把專用對話的模型切到設定的模型與投入程度（例如 Haiku／中），
- * 避免用上次的 Opus 送一則只是用來開始工作階段的訊息。
+ * 自動重設送出前，把專用對話的模型切到設定的模型與思考程度（預設 4 Hydrogen／低），
+ * 避免用較高算力消耗的 4 Neon / 4 Carbon 送一則只是用來開始工作階段的短訊息。
  *
- * 只操作頁面上的模型選單（和你自己點選一樣），不改任何請求。
- * 2026-11 實測：
- *  - 在既有對話切換只影響該對話（之後打開仍是 Haiku，下次就不用再切）；
- *    在新對話（/new）切換會改到全域預設模型，所以呼叫端在 /new 不切換。
- *  - 選單是 Base UI，需要完整的 pointer/mouse 事件序列才會打開。
- *  - 新對話頁的主選單直接列出主要模型；既有對話的主選單只有目前模型，其餘在「更多模型」子選單。
- *  - 投入程度子選單的選項依序為 低、中、高、超高、最高（用位置對應，不依介面語言）。
- * 任何一步找不到都只回報失敗，由呼叫端決定（自動重設會照樣用目前模型送出）。
+ * 2026-11 實機介面（Gemini 4）：
+ *  - 輸入框右側膠囊按鈕顯示目前模型（例如「Hydrogen ^」、「Neon ^」、「自動 ^」）
+ *  - 主選單項目：
+ *      1. 自動（根據需求調整回覆）
+ *      2. 全天候貼心協助（4 Hydrogen）
+ *      3. 深入分析（4 Neon）
+ *      4. 程式編寫與複雜任務（4 Carbon，未解鎖方案帶有鎖頭圖示，不可誤點以免跳出升級視窗）
+ *      5. 底部「思考程度 ▸」子選單：低（快速高效）／中等（適中）／高（詳盡）
+ *  - 只操作頁面上的模型選單，不修改任何網路請求；任何一步失敗都只回報原因並照常送出。
  */
 (function (root) {
-  const CQ = (root.CQ = root.CQ || {});
-  const log = CQ.logger.createLogger('model');
+  const GQ = (root.GQ = root.GQ || {});
+  const log = GQ.logger.createLogger('model');
 
-  const MODELS = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' };
-  const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
-  const MODEL_NAME_RE = /\b(haiku|sonnet|opus|fable)\b/i;
+  const MODELS = {
+    auto: { name: '自動', itemRe: /^\s*(自動(?:\s|$)|Auto\b)/i, labelRe: /\bauto\b|自動/i },
+    hydrogen: { name: '4 Hydrogen', itemRe: /\bhydrogen\b/i, labelRe: /\bhydrogen\b/i },
+    neon: { name: '4 Neon', itemRe: /\bneon\b/i, labelRe: /\bneon\b/i },
+    carbon: { name: '4 Carbon', itemRe: /\bcarbon\b/i, labelRe: /\bcarbon\b/i }
+  };
+  const EFFORTS = ['low', 'medium', 'high'];
+  const ANY_MODEL_RE = /\b(hydrogen|neon|carbon)\b|^\s*(自動(?:\s|$)|Auto\b)/i;
+  const THINKING_TRIGGER_RE = /思考程度|thinking|effort/i;
   const STEP_TIMEOUT_MS = 3000;
   const SETTLE_MS = 800;
 
@@ -35,7 +42,7 @@
     }
   }
 
-  /** Base UI 的選單只認完整的指標事件序列 */
+  /** 相容 Angular Material / CDK 與自訂 UI 的完整指標與點擊事件序列 */
   function press(el) {
     const r = el.getBoundingClientRect();
     const base = {
@@ -57,24 +64,61 @@
     el.dispatchEvent(new MouseEvent('click', { ...base, buttons: 0 }));
   }
 
-  const menus = () => Array.from(document.querySelectorAll('[role="menu"]'));
-  const radios = (menu) => Array.from(menu.querySelectorAll('[role="menuitemradio"]'));
-  const submenuTriggers = (menu) =>
-    Array.from(menu.querySelectorAll('[role="menuitem"][aria-haspopup="menu"]'));
-  const textOf = (el) => (el.textContent || '').trim();
+  /** Angular Material 子選單常由 hover（mouseenter / mouseover）觸發展開 */
+  function hover(el) {
+    const r = el.getBoundingClientRect();
+    const base = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: r.left + r.width / 2,
+      clientY: r.top + r.height / 2,
+      view: window
+    };
+    const P = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+    el.dispatchEvent(new P('pointerover', { ...base, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+    el.dispatchEvent(new P('pointerenter', { ...base, bubbles: false, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+    el.dispatchEvent(new MouseEvent('mouseover', base));
+    el.dispatchEvent(new MouseEvent('mouseenter', { ...base, bubbles: false }));
+  }
 
+  const menus = () =>
+    Array.from(document.querySelectorAll('[role="menu"], [role="listbox"], .mat-mdc-menu-panel'));
+  const menuItems = (menu) =>
+    Array.from(
+      menu.querySelectorAll(
+        '[role="menuitemradio"], [role="menuitem"], [role="option"], button.mat-mdc-menu-item'
+      )
+    );
+  const textOf = (el) => (el.textContent || '').replace(/\s+/g, ' ').trim();
+
+  /**
+   * 優先使用 selectors.modelSelector；若 Gemini 改掉外層標籤，
+   * 備援在輸入區內尋找顯示 Hydrogen / Neon / Carbon / 自動 的選單按鈕（排除左側 + 上傳按鈕）。
+   */
   function trigger() {
-    return CQ.selectors.find('modelSelector');
+    const bySel = GQ.selectors.find('modelSelector');
+    if (bySel) return bySel;
+    const comp = GQ.selectors.getComposer();
+    if (!comp) return null;
+    const btns = Array.from(comp.querySelectorAll('button'));
+    return (
+      btns.find((b) => {
+        const txt = `${b.getAttribute('aria-label') || ''} ${textOf(b)}`;
+        if (/上傳|upload|add files|新增檔案|麥克風|microphone|傳送|send|stop|停止/i.test(txt)) return false;
+        return /\b(hydrogen|neon|carbon|auto)\b|自動|模型|model/i.test(txt);
+      }) || null
+    );
   }
 
   function label() {
     const t = trigger();
-    return t ? t.getAttribute('aria-label') || textOf(t) : '';
+    return t ? `${t.getAttribute('aria-label') || ''} ${textOf(t)}`.trim() : '';
   }
 
-  /** 目前選單按鈕顯示的模型是不是目標模型（例如 "模型：Haiku 5.5 中"） */
   function isCurrent(model) {
-    return new RegExp('\\b' + MODELS[model] + '\\b', 'i').test(label());
+    const spec = MODELS[model];
+    return spec ? spec.labelRe.test(label()) : false;
   }
 
   async function closeMenus() {
@@ -94,17 +138,51 @@
     return waitFor(() => menus()[0] || null);
   }
 
-  /** 打開子選單，回傳新出現的選單 */
+  /** 先嘗試 hover 展開子選單（Angular Material 預設），沒出現再補 click */
   async function openSubmenu(item) {
     const before = new Set(menus());
-    press(item);
-    return waitFor(() => menus().find((m) => !before.has(m)) || null);
+    hover(item);
+    let m = await waitFor(() => menus().find((x) => !before.has(x)) || null, 500);
+    if (!m) {
+      press(item);
+      m = await waitFor(() => menus().find((x) => !before.has(x)) || null);
+    }
+    return m;
   }
 
-  /** 模型項目：名稱開頭符合，且是可選的 menuitemradio（Fable 等需要點數的項目是 menuitem，不會選到） */
+  /** 檢查項目是否停用或帶有未解鎖鎖頭（例如 Pro 方案下的 4 Carbon 🔒），避免誤點跳出升級視窗 */
+  function isLockedOrDisabled(el) {
+    if (el.disabled === true || el.getAttribute('aria-disabled') === 'true') return true;
+    try {
+      if (
+        el.querySelector(
+          'mat-icon[fonticon*="lock" i], [data-mat-icon-name*="lock" i], .lock-icon, [aria-label*="鎖" i], [aria-label*="lock" i], [aria-label*="upgrade" i], [aria-label*="升級"]'
+        )
+      ) {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function submenuTriggers(menu) {
+    const explicit = Array.from(menu.querySelectorAll('[aria-haspopup="menu"], [aria-haspopup="listbox"]'));
+    if (explicit.length) return explicit;
+    return menuItems(menu).filter((e) => THINKING_TRIGGER_RE.test(textOf(e)));
+  }
+
   function findModelItem(menu, model) {
-    const re = new RegExp('^' + MODELS[model] + '\\b', 'i');
-    return radios(menu).find((e) => re.test(textOf(e)) && e.getAttribute('aria-disabled') !== 'true') || null;
+    const spec = MODELS[model];
+    if (!spec) return null;
+    const candidates = menuItems(menu).filter(
+      (e) =>
+        !e.hasAttribute('aria-haspopup') &&
+        !THINKING_TRIGGER_RE.test(textOf(e)) &&
+        spec.itemRe.test(`${e.getAttribute('aria-label') || ''} ${textOf(e)}`)
+    );
+    if (!candidates.length) return null;
+    const unlocked = candidates.find((e) => !isLockedOrDisabled(e));
+    return unlocked || 'locked';
   }
 
   async function selectModel(model) {
@@ -112,15 +190,18 @@
     if (!main) return 'menu-not-opened';
     let item = findModelItem(main, model);
     if (!item) {
-      // 既有對話：其他模型在「更多模型」子選單裡（子選單的項目是模型名稱）
       for (const sub of submenuTriggers(main)) {
         const m = await openSubmenu(sub);
         if (!m) continue;
-        if (radios(m).some((e) => MODEL_NAME_RE.test(textOf(e)))) {
+        if (menuItems(m).some((e) => ANY_MODEL_RE.test(textOf(e)))) {
           item = findModelItem(m, model);
           break;
         }
       }
+    }
+    if (item === 'locked') {
+      await closeMenus();
+      return 'model-locked';
     }
     if (!item) {
       await closeMenus();
@@ -139,13 +220,15 @@
     const index = EFFORTS.indexOf(effort);
     const main = await openMenu();
     if (!main) return 'menu-not-opened';
-    // 投入程度子選單：選項不是模型名稱、而且剛好是 5 個等級
     let options = null;
-    for (const sub of submenuTriggers(main)) {
+    const subs = submenuTriggers(main);
+    // 優先找「思考程度 / Thinking」觸發項
+    subs.sort((a, b) => Number(THINKING_TRIGGER_RE.test(textOf(b))) - Number(THINKING_TRIGGER_RE.test(textOf(a))));
+    for (const sub of subs) {
       const m = await openSubmenu(sub);
       if (!m) continue;
-      const r = radios(m);
-      if (r.length === EFFORTS.length && !r.some((e) => MODEL_NAME_RE.test(textOf(e)))) {
+      const r = menuItems(m).filter((e) => !e.hasAttribute('aria-haspopup'));
+      if (r.length === EFFORTS.length && !r.some((e) => ANY_MODEL_RE.test(textOf(e)))) {
         options = r;
         break;
       }
@@ -155,11 +238,11 @@
       return 'effort-not-found';
     }
     const target = options[index];
-    if (target.getAttribute('aria-checked') === 'true') {
+    if (target.getAttribute('aria-checked') === 'true' || target.getAttribute('aria-selected') === 'true') {
       await closeMenus();
       return null;
     }
-    if (target.getAttribute('aria-disabled') === 'true') {
+    if (isLockedOrDisabled(target)) {
       await closeMenus();
       return 'effort-unavailable';
     }
@@ -170,8 +253,8 @@
   }
 
   /**
-   * 把模型與投入程度切到指定值。
-   * @param {{model: 'none'|'haiku'|'sonnet'|'opus', effort: 'none'|'low'|'medium'|'high'|'xhigh'|'max'}} want
+   * 把模型與思考程度切到指定值。
+   * @param {{model: 'none'|'auto'|'hydrogen'|'neon'|'carbon', effort: 'none'|'low'|'medium'|'high'}} want
    * @returns {Promise<{ok: boolean, changed: boolean, reason?: string}>}
    */
   async function ensure({ model = 'none', effort = 'none' } = {}) {
@@ -199,7 +282,6 @@
           return { ok: false, changed, reason: err };
         }
       }
-      // 2026-11 實測：切換後按鈕文字可能短暫顯示舊模型，等它穩定再確認一次
       if (changed) {
         await sleep(SETTLE_MS);
         if (!(await waitFor(() => isCurrent(wantModel)))) {
@@ -216,5 +298,5 @@
     return { ok: true, changed };
   }
 
-  CQ.model = { ensure, label, MODELS, EFFORTS };
+  GQ.model = { ensure, label, MODELS, EFFORTS };
 })(globalThis);

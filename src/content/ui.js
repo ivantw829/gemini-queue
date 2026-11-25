@@ -1,9 +1,9 @@
 /*
  * 頁面內 UI：提示（toast）與浮動確認列（bar）。
- * 放在 Shadow DOM 裡，樣式不會與 claude.ai 互相影響。
+ * 放在 Shadow DOM 裡，樣式不會與 gemini.google.com 互相影響。
  */
 (function (root) {
-  const CQ = (root.CQ = root.CQ || {});
+  const GQ = (root.GQ = root.GQ || {});
 
   const STYLE = `
     :host { all: initial; }
@@ -12,29 +12,32 @@
       font: 14px/1.45 system-ui, -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
       pointer-events: none; max-width: min(640px, calc(100vw - 32px)); }
     .toast, .bar { pointer-events: auto; box-shadow: 0 6px 24px rgba(0,0,0,.18);
-      border-radius: 10px; padding: 10px 14px; color: #1f1e1d; background: #fffdf8;
-      border: 1px solid #e6dfd3; }
+      border-radius: 12px; padding: 10px 14px; color: #1f1f1f; background: #f8f9fc;
+      border: 1px solid #d3dbe8; }
     .toast { animation: in .18s ease-out; }
     .toast.warn { border-color: #e7b45a; background: #fff7e6; }
     .toast.error { border-color: #d9534f; background: #fdecea; }
     .toast.success { border-color: #6aa86a; background: #edf7ed; }
-    .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; border-color: #d97757; }
+    .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; border-color: #1a73e8; }
     .bar .msg { flex: 1 1 260px; }
-    .bar .sub { display: block; font-size: 12px; color: #6b6760; margin-top: 2px; }
+    .bar .sub { display: block; font-size: 12px; color: #5f6368; margin-top: 2px; }
     .bar .btns { display: flex; gap: 6px; flex-wrap: wrap; }
-    button { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 7px; cursor: pointer;
-      border: 1px solid #cfc8bc; background: #fff; color: #1f1e1d; }
+    button { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 8px; cursor: pointer;
+      border: 1px solid #c4c7c5; background: #fff; color: #1f1f1f; }
     button:hover { filter: brightness(.96); }
-    button.primary { background: #d97757; border-color: #c4643f; color: #fff; }
+    button.primary { background: #1a73e8; border-color: #1557b0; color: #fff; }
     button.danger { color: #b3261e; }
-    .tag { font-size: 11px; font-weight: 600; color: #d97757; margin-right: 6px; }
+    .tag { font-size: 11px; font-weight: 600; color: #1a73e8; margin-right: 6px; }
     @media (prefers-color-scheme: dark) {
-      .toast, .bar { background: #2b2a27; color: #f1eee7; border-color: #4a4740; }
+      .toast, .bar { background: #1e1f20; color: #e3e3e3; border-color: #444746; }
       .toast.warn { background: #3a3020; } .toast.error { background: #3d2322; }
-      .toast.success { background: #22331f; }
-      .bar .sub { color: #b4afa6; }
-      button { background: #3a3833; color: #f1eee7; border-color: #57534b; }
-      button.danger { color: #ff8a80; }
+      .toast.success { background: #1f3322; }
+      .bar { border-color: #8ab4f8; }
+      .bar .sub { color: #9aa0a6; }
+      .tag { color: #8ab4f8; }
+      button { background: #2d2e30; color: #e3e3e3; border-color: #5f6368; }
+      button.primary { background: #8ab4f8; border-color: #8ab4f8; color: #062e6f; font-weight: 600; }
+      button.danger { color: #f28b82; }
     }
     @keyframes in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   `;
@@ -46,7 +49,7 @@
 
   function ensureHost() {
     if (host && host.isConnected) return;
-    host = document.createElement('claude-queue-ui');
+    host = document.createElement('gemini-queue-ui');
     const shadow = host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
     style.textContent = STYLE;
@@ -68,7 +71,7 @@
     el.className = `toast ${opts.kind || 'info'}`;
     const tag = document.createElement('span');
     tag.className = 'tag';
-    tag.textContent = 'Claude Queue';
+    tag.textContent = 'Gemini Queue';
     el.append(tag, document.createTextNode(message));
     wrap.appendChild(el);
     const duration = opts.duration ?? (opts.kind === 'error' ? 10000 : 6000);
@@ -91,7 +94,7 @@
     msg.className = 'msg';
     const tag = document.createElement('span');
     tag.className = 'tag';
-    tag.textContent = 'Claude Queue';
+    tag.textContent = 'Gemini Queue';
     const text = document.createElement('span');
     text.className = 'text';
     text.textContent = opts.message;
@@ -149,5 +152,5 @@
     return !!barEl;
   }
 
-  CQ.ui = { toast, showBar, updateBar, hideBar, isBarOpen };
+  GQ.ui = { toast, showBar, updateBar, hideBar, isBarOpen };
 })(globalThis);

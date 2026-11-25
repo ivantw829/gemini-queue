@@ -17,7 +17,7 @@ vm.createContext(ctx);
 for (const f of ['src/shared/constants.js', 'src/shared/text.js', 'src/shared/session.js']) {
   vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f });
 }
-const S = ctx.CQ.session;
+const S = ctx.GQ.session;
 const MIN = 60 * 1000;
 const H = 60 * MIN;
 const T = Date.UTC(2026, 10, 12, 7, 15, 0); // 15:15 台灣時間
@@ -89,11 +89,11 @@ test('popup status: no API data → no-data', () => {
 });
 
 test('urlShape: keeps the path structure, never the conversation id', () => {
-  const U = ctx.CQ.text.urlShape;
-  assert.equal(U('https://claude.ai/chat/3f1c2a9e-1b2c-4d5e-8f90-123456789abc?x=1#y'), '/chat/:id');
-  assert.equal(U('https://claude.ai/new'), '/new');
-  assert.equal(U('https://claude.ai/'), '/');
-  assert.equal(U('https://claude.ai/project/0199aa11-2233-7445-8899-aabbccddeeff'), '/project/:id');
-  assert.equal(U('https://claude.ai/recents'), '/recents');
-  assert.equal(U('https://example.com/chat/abc'), 'other:/chat/abc');
+  const U = ctx.GQ.text.urlShape;
+  assert.equal(U('https://gemini.google.com/app/3f1c2a9e1b2c4d5e?x=1#y'), '/app/:id');
+  assert.equal(U('https://gemini.google.com/app'), '/app');
+  assert.equal(U('https://gemini.google.com/'), '/');
+  assert.equal(U('https://gemini.google.com/gem/coding-partner/chat12345'), '/gem/:id/:id');
+  assert.equal(U('https://gemini.google.com/mystuff'), '/mystuff');
+  assert.equal(U('https://example.com/app/abc'), 'other:/app/:id');
 });

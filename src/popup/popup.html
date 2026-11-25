@@ -3,12 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Claude Queue</title>
+    <title>Gemini Queue</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <header>
-      <h1>Claude Queue <span id="version" class="version"></span></h1>
+      <h1>Gemini Queue <span id="version" class="version"></span></h1>
       <div class="head-actions">
         <button id="refresh" class="icon" data-i18n-title="popupRefresh" aria-label="refresh">⟳</button>
         <button id="openOptions" class="icon" data-i18n-title="popupOptions" aria-label="options">⚙</button>
@@ -22,21 +22,23 @@
     </div>
 
     <section class="card" id="usageCard">
-      <div class="meter" id="sessionMeter">
-        <div class="meter-head">
-          <span data-i18n="usageSession"></span>
-          <span class="pct">--</span>
+      <div id="metersWrap">
+        <div class="meter" id="sessionMeter">
+          <div class="meter-head">
+            <span data-i18n="usageSession"></span>
+            <span class="pct">--</span>
+          </div>
+          <div class="bar"><div class="fill"></div></div>
+          <div class="reset"></div>
         </div>
-        <div class="bar"><div class="fill"></div></div>
-        <div class="reset"></div>
-      </div>
-      <div class="meter" id="weeklyMeter">
-        <div class="meter-head">
-          <span data-i18n="usageWeekly"></span>
-          <span class="pct">--</span>
+        <div class="meter" id="weeklyMeter">
+          <div class="meter-head">
+            <span data-i18n="usageWeekly"></span>
+            <span class="pct">--</span>
+          </div>
+          <div class="bar"><div class="fill"></div></div>
+          <div class="reset"></div>
         </div>
-        <div class="bar"><div class="fill"></div></div>
-        <div class="reset"></div>
       </div>
       <div id="usageStatus" class="status-line"></div>
       <div id="usageSource" class="muted small"></div>
