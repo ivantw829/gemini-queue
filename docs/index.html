@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini Queue — Gemini 用量達上限時自動排隊，額度重置後提醒送出 | 開源 Chrome 擴充功能</title>
+  <meta name="description" content="免費開源的 Chrome 擴充功能。當 gemini.google.com 達到 5 小時算力或每週用量上限時，自動將你的訊息與圖片、PDF 附件存入本機佇列，即時追蹤雙用量進度條，並在額度重置後通知你一鍵還原送出。完全本機運作、零伺服器。">
+  <meta name="keywords" content="Gemini Queue, Gemini Chrome 擴充功能, Gemini 用量上限, Gemini 額度重置, gemini.google.com, 自動排隊, 訊息佇列, 自動重設, 5小時額度, 開源專案, Chrome Extension">
+  <meta name="author" content="ivantw829">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#1a73e8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b1020" media="(prefers-color-scheme: dark)">
+  <link rel="canonical" href="https://ivantw829.github.io/gemini-queue/">
+
+  <!-- Open Graph / Facebook / LINE / Discord / LinkedIn -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://ivantw829.github.io/gemini-queue/">
+  <meta property="og:site_name" content="Gemini Queue">
+  <meta property="og:locale" content="zh_TW">
+  <meta property="og:title" content="Gemini Queue — 額度滿了，照樣按送出">
+  <meta property="og:description" content="gemini.google.com 達 5 小時或每週額度上限時，自動保存訊息與本機附件，即時追蹤雙用量進度條，重置後通知你一鍵還原送出。100% 本機運作、MIT 開源免費。">
+  <meta property="og:image" content="https://ivantw829.github.io/gemini-queue/og-image.png">
+  <meta property="og:image:secure_url" content="https://ivantw829.github.io/gemini-queue/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Gemini Queue — 在 gemini.google.com 用量滿時自動將訊息與附件排入本機佇列，額度重置後通知送出">
+
+  <!-- Twitter / X Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Gemini Queue — 額度滿了，照樣按送出">
+  <meta name="twitter:description" content="gemini.google.com 達 5 小時或每週用量上限時，自動保存文字與圖片／PDF 附件至本機佇列，即時追蹤用量條，重置後通知還原送出。">
+  <meta name="twitter:image" content="https://ivantw829.github.io/gemini-queue/og-image.png">
+  <meta name="twitter:image:alt" content="Gemini Queue Chrome 擴充功能預覽：5 小時與每週雙用量進度條與本機訊息佇列">
+
+  <!-- Favicons -->
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/icon32.png">
+  <link rel="icon" type="image/png" sizes="128x128" href="assets/icon128.png">
+  <link rel="apple-touch-icon" href="assets/icon128.png">
+
+  <link rel="stylesheet" href="styles.css">
+
+  <!-- Prevent flash of wrong theme -->
+  <script>
+    (function () {
+      var saved = localStorage.getItem('gq-docs-theme');
+      var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.setAttribute('data-theme', saved || (dark ? 'dark' : 'light'));
+    })();
+  </script>
+
+  <!-- JSON-LD Structured Data: SoftwareApplication + FAQPage -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "Gemini Queue",
+        "alternateName": "Gemini 佇列擴充功能",
+        "applicationCategory": "BrowserApplication",
+        "operatingSystem": "Chrome 116+, Edge, Brave, Arc",
+        "softwareVersion": "0.1.0",
+        "inLanguage": "zh-Hant",
+        "url": "https://ivantw829.github.io/gemini-queue/",
+        "downloadUrl": "https://github.com/ivantw829/gemini-queue",
+        "codeRepository": "https://github.com/ivantw829/gemini-queue",
+        "license": "https://opensource.org/licenses/MIT",
+        "image": "https://ivantw829.github.io/gemini-queue/og-image.png",
+        "description": "免費開源的 Chrome 擴充功能。當 gemini.google.com 達到 5 小時算力循環上限或每週上限時，自動把你要送出的訊息與本機附件存入佇列，等額度重置後發出桌面通知並協助填回原對話送出。",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "TWD"
+        },
+        "author": {
+          "@type": "Person",
+          "name": "ivantw829",
+          "url": "https://github.com/ivantw829"
+        }
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "這會讓我多用額度或繞過 Google 的限制嗎？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "不會。它只是在你被擋下時把訊息存起來，等額度恢復後再透過頁面上的送出按鈕送出，跟你自己晚點回來貼上送出完全一樣。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "我的訊息與附件會被傳到哪裡？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "哪裡都不會。佇列文字只存在你自己 Chrome 的 chrome.storage.local，附件存在擴充功能自己的本機 IndexedDB（gq-files），訊息送出或刪除時就會一併清除。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "可以傳圖片或 PDF 附件嗎？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "可以。從電腦選取、拖放或剪貼簿貼上的檔案都會連同文字一起排隊（單檔上限 30MB、每則 20 個、佇列總量 300MB），重置後自動加回輸入區並等上傳完成才送出。Google 雲端硬碟連結的附件無法保存，遇到時會提示並照原本方式處理。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "支援多個 Google 帳號切換（/u/0、/u/1）或 Gems 嗎？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "支援。排隊時會完整保留 /u/<n> 帳號路徑與 /gem/<id>，查詢 /usage 時也會自動對應同一個 /u/<n>/usage 帳號，不會跨帳號誤送或讀錯額度。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "為什麼偶爾會看到背景閃過一個 gemini.google.com/usage 分頁又馬上關掉？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "因為 gemini.google.com 禁止 iframe 內嵌（X-Frame-Options: DENY）且用量百分比由前端動態渲染，擴充功能會在背景靜默開一個不搶焦點的 /usage 分頁讀取最新百分比，讀完（約 1–2 秒）立刻自動關閉。你也可以調整輪詢頻率，或自己釘選一個 /usage 分頁讓擴充功能直接複用。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "電腦睡眠或 Chrome 關閉時會怎樣？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Chrome 關閉時無法執行排程。下次打開 Chrome 時會自動重建排程；若重置時間已經過了，會立刻檢查並通知你。"
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <!-- Header & Sticky Navigation -->
+  <header class="site-header">
+    <div class="container nav-inner">
+      <a class="brand" href="#top" aria-label="Gemini Queue 首頁">
+        <img src="assets/icon32.png" alt="Gemini Queue 圖示" width="30" height="30">
+        <span>Gemini Queue</span>
+        <span class="version-tag">v0.1.0</span>
+      </a>
+
+      <nav aria-label="主要導覽">
+        <ul class="nav-links" id="navLinks">
+          <li><a href="#workflow">運作流程</a></li>
+          <li><a href="#features">核心特色</a></li>
+          <li><a href="#install">安裝教學</a></li>
+          <li><a href="#advanced">進階功能</a></li>
+          <li><a href="#privacy">隱私安全</a></li>
+          <li><a href="#faq">常見問題</a></li>
+        </ul>
+      </nav>
+
+      <div class="nav-actions">
+        <button class="icon-btn" id="themeToggle" type="button" aria-label="切換深淺色主題" title="切換深淺色主題">
+          <svg id="iconSun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+          </svg>
+          <svg id="iconMoon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+        </button>
+
+        <a class="btn btn-primary btn-sm nav-cta-desktop" href="https://github.com/ivantw829/gemini-queue" target="_blank" rel="noopener noreferrer">
+          GitHub
+        </a>
+
+        <button class="icon-btn menu-toggle" id="menuToggle" type="button" aria-label="開啟導覽選單" aria-expanded="false" aria-controls="navLinks">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M4 6h16M4 12h16M4 18h16"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- Hero Section -->
+    <section class="hero">
+      <div class="container hero-grid">
+        <div>
+          <div class="hero-badge">
+            <span class="pulse-dot" aria-hidden="true"></span>
+            Chrome 擴充功能 · Manifest V3 · MIT 開源免費
+          </div>
+          <h1>
+            額度滿了，<br>
+            <span class="gradient-text">照樣按送出。</span>
+          </h1>
+          <p class="hero-desc">
+            當 <code>gemini.google.com</code> 達到 <strong>5 小時算力循環</strong>或<strong>每週用量上限</strong>時，Gemini Queue 會把你打好的長篇訊息與本機附件安全存入佇列，即時追蹤用量進度條，等額度重置後通知你一鍵還原送出。
+          </p>
+          <div class="hero-cta">
+            <a class="btn btn-primary" href="#install">
+              5 分鐘快速安裝
+            </a>
+            <a class="btn btn-secondary" href="https://github.com/ivantw829/gemini-queue/archive/refs/heads/main.zip" rel="noopener noreferrer">
+              下載 ZIP 原始碼
+            </a>
+            <a class="btn btn-ghost" href="https://discord.gg/yEpS7vSJtv" target="_blank" rel="noopener noreferrer">
+              加入 Discord 社群
+            </a>
+          </div>
+          <ul class="trust-list" aria-label="核心保證">
+            <li>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              100% 本機儲存、零伺服器
+            </li>
+            <li>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              支援圖片／PDF 附件排隊
+            </li>
+            <li>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              完整支援多帳號與 Gems
+            </li>
+            <li>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              純 JS 零依賴、不偽造請求
+            </li>
+          </ul>
+        </div>
+
+        <!-- Interactive Popup Preview -->
+        <div class="demo-shell" aria-label="Gemini Queue 互動體驗預覽">
+          <div class="demo-topbar">
+            <div class="demo-title">
+              <img src="assets/icon32.png" alt="" width="22" height="22">
+              <span>Gemini Queue</span>
+            </div>
+            <span class="demo-status-pill" id="demoStatus">用量已滿</span>
+          </div>
+
+          <div class="demo-card">
+            <div class="meter">
+              <div class="meter-head">
+                <span>目前用量（5 小時）</span>
+                <span id="demoFivePct">100%</span>
+              </div>
+              <div class="meter-bar">
+                <div class="meter-fill full" id="demoFiveFill" style="width: 100%"></div>
+              </div>
+              <div class="meter-meta" id="demoFiveMeta">預計 15:30 重置（剩餘 1 小時 12 分）</div>
+            </div>
+            <div class="meter">
+              <div class="meter-head">
+                <span>每週上限</span>
+                <span id="demoWeekPct">42%</span>
+              </div>
+              <div class="meter-bar">
+                <div class="meter-fill" id="demoWeekFill" style="width: 42%"></div>
+              </div>
+              <div class="meter-meta" id="demoWeekMeta">週日 08:00 重置</div>
+            </div>
+          </div>
+
+          <div class="demo-queue-head">
+            <span id="demoQueueCount">待送出佇列（1）</span>
+            <span>/u/0/app/a8f2...</span>
+          </div>
+
+          <div class="demo-queue-item" id="demoQueueCard">
+            <div class="demo-item-top">
+              <span class="badge badge-waiting" id="demoBadge">等待重置</span>
+              <span class="meter-meta" id="demoItemTime">預計 15:30 提醒</span>
+            </div>
+            <p class="demo-item-text">請幫我整理這份規格書的 API 變更重點，並列出潛在的相容性風險...</p>
+            <div class="demo-item-files">📎 spec-v2.pdf · diagram.png</div>
+          </div>
+
+          <div class="demo-controls" role="group" aria-label="互動狀態切換">
+            <button class="demo-btn active" type="button" data-demo-state="full" aria-pressed="true">1. 用量已滿</button>
+            <button class="demo-btn" type="button" data-demo-state="reset" aria-pressed="false">2. 額度重置</button>
+            <button class="demo-btn" type="button" data-demo-state="sent" aria-pressed="false">3. 送出完成</button>
+          </div>
+          <p class="demo-hint" id="demoHint">目前為「用量已滿」狀態：按下送出後訊息與附件已安全存入本機佇列。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- How It Works -->
+    <section class="section section-alt" id="workflow">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-eyebrow">運作流程</span>
+          <h2>把「複製文字、記時間、找對話」全部自動化</h2>
+          <p>用量未滿時完全零干擾，跟沒裝一樣；遇到額度上限時，四個步驟無縫接手。</p>
+        </div>
+
+        <div class="steps-grid">
+          <article class="step-card">
+            <div class="step-num">1</div>
+            <h3>照常按送出</h3>
+            <p>偵測到 5 小時或每週用量已滿時，攔截這次送出，把文字、本機附件、對話網址與重置時間存入本機佇列，<strong>確認存檔成功後</strong>才清空輸入框。</p>
+          </article>
+          <article class="step-card">
+            <div class="step-num">2</div>
+            <h3>自動確認額度重置</h3>
+            <p>到了重置時間（＋30 秒緩衝），自動透過 <code>/usage</code> 驗證額度是否真的恢復；若尚未重置，每 2 分鐘自動重試（最多 10 次）。</p>
+          </article>
+          <article class="step-card">
+            <div class="step-num">3</div>
+            <h3>發出桌面通知</h3>
+            <p>確認恢復後立即彈出「Gemini 額度已重置」桌面通知，工具列圖示數字也會轉為綠色提示可送出。</p>
+          </article>
+          <article class="step-card">
+            <div class="step-num">4</div>
+            <h3>一鍵還原並送出</h3>
+            <p>點擊通知自動開啟原對話分頁，填回文字與附件並顯示確認列，由你按下「送出」（亦可於設定頁啟用倒數 3 秒自動送出）。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Core Features -->
+    <section class="section" id="features">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-eyebrow">核心特色</span>
+          <h2>專為 Gemini 重度使用者打造的細節保護</h2>
+          <p>從雙用量監控、本機附件保存，到多帳號隔離與防重複送出，每個邊緣情況都幫你先想好了。</p>
+        </div>
+
+        <div class="features-grid">
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">📊</div>
+            <h3>即時雙用量進度條</h3>
+            <p>自動從 <code>gemini.google.com/usage</code> 讀取<strong>目前用量（5 小時）</strong>與<strong>每週上限</strong>百分比及重置倒數，點一下工具列圖示就一目了然。</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">📎</div>
+            <h3>圖片與 PDF 附件也能排隊</h3>
+            <p>選檔、拖放或剪貼簿貼上的本機檔案會存入專屬 IndexedDB（單檔 30MB／每則 20 檔／總量 300MB），還原後等上傳完成才送出，送出即自動清理。</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">👥</div>
+            <h3>完整支援多帳號與 Gems</h3>
+            <p>嚴格保留 <code>/u/0</code>、<code>/u/1</code> 等 Google 多帳號路徑以及 <code>/gem/&lt;id&gt;</code>，查詢 <code>/usage</code> 自動對應同帳號，絕不跨帳號誤送。</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">🛡️</div>
+            <h3>不會弄丟任何一則訊息</h3>
+            <p>確認存檔成功才清空輸入框；還原時若 Gemini 編輯器改版導致填入失敗，訊息保留在佇列並提供一鍵「複製文字」保底。</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">🌙</div>
+            <h3>睡前「自動重設」工作階段</h3>
+            <p>選用功能：5 小時工作階段歸零時自動在專用對話送出短訊息（預設切至最省額度的 <strong>4 Hydrogen／低</strong>），起床即可無縫接力兩個工作階段。</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">🔒</div>
+            <h3>防重複送出與草稿保護</h3>
+            <p>內建多分頁 claim token 互斥鎖、自動排除生成中的停止鈕、偵測手動已送出內容；若輸入框已有草稿，自動模式會先備份草稿再覆蓋。</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">⚡</div>
+            <h3>零干擾、零依賴免建置</h3>
+            <p>純 JavaScript + Manifest V3，下載即可直接載入 Chrome。用量沒滿時完全不攔截任何動作，也不影響原本的打字與快捷鍵體驗。</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">🧩</div>
+            <h3>可隨時編輯與立即重試</h3>
+            <p>在工具列小視窗中可隨時編輯排隊中的提示詞、按「立即嘗試」手動還原，或透過兩段式確認安全刪除，並支援同一對話多則依序送出。</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">🔔</div>
+            <h3>新版本自動提醒</h3>
+            <p>從 GitHub 安裝時每天僅讀取一次 <code>manifest.json</code> 版本號（不帶任何參數與 Cookie，可關閉），有更新即附上明確升級步驟。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Installation Guide -->
+    <section class="section section-alt" id="install">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-eyebrow">安裝教學</span>
+          <h2>5 分鐘載入 Chrome，無需任何建置工具</h2>
+          <p>不需要 Node.js 或編譯流程，下載原始碼後直接載入未封裝擴充功能即可開始使用。</p>
+        </div>
+
+        <div class="prereq-bar">
+          <span><strong>支援瀏覽器：</strong>Google Chrome 116+（Edge、Brave、Arc 等 Chromium 核心亦可）</span>
+          <span><strong>適用網站：</strong><code>https://gemini.google.com/*</code> 網頁版</span>
+        </div>
+
+        <div class="tabs-wrap">
+          <div class="tab-list" role="tablist" aria-label="安裝方式">
+            <button class="tab-btn active" type="button" role="tab" aria-selected="true" data-tab-target="zip">方式 A：下載 ZIP（推薦新手）</button>
+            <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab-target="git">方式 B：Git Clone（開發者）</button>
+          </div>
+
+          <div class="tab-panel" data-tab-panel="zip">
+            <ol class="install-steps">
+              <li><span>前往 <a href="https://github.com/ivantw829/gemini-queue" target="_blank" rel="noopener noreferrer">GitHub 專案頁面</a>，點選右上角綠色 <strong>Code → Download ZIP</strong>（或直接<a href="https://github.com/ivantw829/gemini-queue/archive/refs/heads/main.zip" rel="noopener noreferrer">按此下載 ZIP</a>），解壓縮並移動到<strong>固定資料夾</strong>（安裝後請勿刪除或移動）。</span></li>
+              <li><span>在 Chrome 網址列輸入 <code>chrome://extensions</code> 後按 Enter。</span></li>
+              <li><span>打開右上角的 <strong>「開發人員模式」</strong> 開關。</span></li>
+              <li><span>點擊左上角 <strong>「載入未封裝項目」</strong>，選擇裡面直接包含 <code>manifest.json</code> 的那層資料夾。</span></li>
+              <li><span>點選工具列右上角拼圖圖示 🧩，將 <strong>Gemini Queue</strong> 釘選 📌 到工具列。</span></li>
+              <li><span><strong>重新整理已開啟的 <code>gemini.google.com</code> 分頁</strong>（按 <code>⌘ R</code> 或 <code>Ctrl R</code>），並確認系統已允許 Google Chrome 發送桌面通知。</span></li>
+            </ol>
+          </div>
+
+          <div class="tab-panel" data-tab-panel="git" hidden>
+            <div class="code-block">
+              <code>git clone https://github.com/ivantw829/gemini-queue.git</code>
+              <button class="copy-btn" type="button" data-copy="git clone https://github.com/ivantw829/gemini-queue.git">複製指令</button>
+            </div>
+            <ol class="install-steps">
+              <li><span>執行上方指令複製專案到本地固定目錄。</span></li>
+              <li><span>開啟 Chrome 網址列 <code>chrome://extensions</code>，打開右上角<strong>「開發人員模式」</strong>。</span></li>
+              <li><span>按左上角<strong>「載入未封裝項目」</strong>，選擇 <code>gemini-queue</code> 資料夾。</span></li>
+              <li><span>釘選圖示到工具列，並<strong>重新整理已開著的 <code>gemini.google.com</code> 分頁</strong>即可生效。</span></li>
+            </ol>
+            <div class="code-block" style="margin-top:16px;margin-bottom:0;">
+              <code>git pull  # 日後更新程式碼後，到 chrome://extensions 按 ↻ 重新載入即可</code>
+              <button class="copy-btn" type="button" data-copy="git pull">複製更新指令</button>
+            </div>
+          </div>
+
+          <div class="callout-grid">
+            <div class="callout callout-tip">
+              <h4>🧪 不用等額度用完，馬上試玩一次！</h4>
+              <p>打開擴充功能設定頁（popup 右上角 ⚙）→「除錯」→ 勾選<strong>模擬「用量已滿」</strong>並填 <code>2</code> 分鐘，到 Gemini 送出一則測試訊息即可完整體驗排隊、通知與還原流程！（試完記得關閉模擬）</p>
+            </div>
+            <div class="callout callout-info">
+              <h4>📖 需要更詳細的圖文級步驟？</h4>
+              <p>我們也準備了完整的 <a href="https://github.com/ivantw829/gemini-queue/blob/main/GUIDE.md" target="_blank" rel="noopener noreferrer">新手教學（GUIDE.md）</a>，包含系統桌面通知設定、更新保留佇列步驟與完整疑難排解。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Advanced Features & Settings -->
+    <section class="section" id="advanced">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-eyebrow">進階功能與設定</span>
+          <h2>睡前「自動重設」，早上連續暢用兩個工作階段</h2>
+          <p>除了被動排隊，Gemini Queue 也提供精細的自動化選項，讓 5 小時算力循環發揮最大效率。</p>
+        </div>
+
+        <div class="split-grid">
+          <article class="panel-card">
+            <h3>🌙 什麼是「自動重設」（選用）？</h3>
+            <p>Gemini 的 5 小時工作階段歸零後，必須等你<strong>送出下一則訊息</strong>才會開始計算新的一輪。開啟自動重設後，擴充功能會在工作階段歸零（＋90 秒緩衝）且每週上限未滿時，於專用對話自動送出一則短訊息（預設切到最省額度的 <strong>4 Hydrogen／思考程度「低」</strong>，並自動避開帶鎖頭 🔒 的未解鎖模型）。</p>
+            <div class="timeline">
+              <div class="timeline-row">
+                <span class="timeline-time">凌晨 03:00</span>
+                <span>上一輪歸零，自動送出 <code>Hello World!</code> 啟動新 5 小時倒數（08:00 重置）。</span>
+              </div>
+              <div class="timeline-row">
+                <span class="timeline-time">早上 07:00</span>
+                <span>起床開始工作，馬上可以使用這一輪的完整額度 1 小時。</span>
+              </div>
+              <div class="timeline-row">
+                <span class="timeline-time">早上 08:00</span>
+                <span>額度無縫重置，立刻接上第二個全新的 5 小時工作階段！</span>
+              </div>
+            </div>
+            <ul class="bullet-list">
+              <li>需保持 Chrome 開啟、<strong>電腦不睡眠</strong>（macOS 可在終端機執行 <code>caffeinate -i</code>）且維持登入。</li>
+              <li>若佇列已有排隊訊息正在自動送出，不會額外重複送出；連續失敗 3 次自動暫停並通知。</li>
+            </ul>
+          </article>
+
+          <article class="panel-card">
+            <h3>🛡️ 多種邊緣情況的可靠保護</h3>
+            <p>聊天網頁環境複雜，Gemini Queue 在背景 Service Worker 與 Content Script 之間實作了嚴謹的防呆機制：</p>
+            <ul class="bullet-list">
+              <li><strong>等待中關閉分頁</strong>：完全不影響，重置時自動開啟新分頁還原。</li>
+              <li><strong>送出中途關閉分頁</strong>：標記為「失敗（請確認是否已送出）」，<strong>絕不自動重送</strong>避免重複扣額度。</li>
+              <li><strong>在 <code>/app</code> 新對話連續排隊</strong>：第一則送出取得 <code>/app/&lt;id&gt;</code> 後，後續同群組訊息自動重新綁定並依序送入同一對話。</li>
+              <li><strong>瀏覽器重啟</strong>：<code>onStartup</code> 與每次 Service Worker 喚醒都會依佇列自動重建排程並清理殘留暫時分頁。</li>
+              <li><strong>原對話已刪除或網址變更</strong>：手動模式詢問是否改於目前對話送出；自動模式重試一次仍不符則安全停止並通知。</li>
+              <li><strong>改版易於維護</strong>：DOM 選擇器與 <code>/usage</code> 解析皆獨立集中於單一檔案，找不到元素時會清楚提示。</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="table-wrap" role="region" aria-label="設定頁選項總覽" tabindex="0">
+          <table>
+            <thead>
+              <tr>
+                <th>設定項目</th>
+                <th>預設值</th>
+                <th>功能說明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>重置後自動送出</strong></td>
+                <td>關閉</td>
+                <td>開啟前會跳出確認視窗。啟用後重置時自動開啟原對話、填回文字與附件，倒數 3 秒後送出。</td>
+              </tr>
+              <tr>
+                <td><strong>自動重設（專用對話）</strong></td>
+                <td>關閉</td>
+                <td>5 小時工作階段歸零時自動送出短訊息（預設 <code>Hello World!</code>，可自訂）以提早啟動下一輪倒數。</td>
+              </tr>
+              <tr>
+                <td><strong>自動重設模型與思考程度</strong></td>
+                <td><code>4 Hydrogen</code> ／ <code>低</code></td>
+                <td>可選 <code>4 Hydrogen</code>、<code>自動</code>、<code>4 Neon</code>、<code>4 Carbon</code> 或不切換；思考程度可選低／中等／高／不調整。</td>
+              </tr>
+              <tr>
+                <td><strong>桌面通知</strong></td>
+                <td>開啟</td>
+                <td>額度重置、自動送出狀態或需要手動確認時發送系統桌面通知。</td>
+              </tr>
+              <tr>
+                <td><strong>用量輪詢頻率</strong></td>
+                <td>每 2 分鐘</td>
+                <td>控制背景更新 <code>/usage</code> 的頻率（最長可設 30 分鐘），多分頁共用最新快照不重複抓取。</td>
+              </tr>
+              <tr>
+                <td><strong>自動檢查新版本</strong></td>
+                <td>開啟</td>
+                <td>每天讀取一次 GitHub <code>manifest.json</code> 版本號（不帶 Cookie 與參數），有更新時提醒。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Privacy & Architecture -->
+    <section class="section section-alt" id="privacy">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-eyebrow">隱私安全與原則</span>
+          <h2>你的對話與檔案，永遠只留在你自己的電腦裡</h2>
+          <p>程式碼 100% 公開透明，不收集任何個人資料，也不會對 Google 發送偽造 API 請求。</p>
+        </div>
+
+        <div class="privacy-grid">
+          <article class="privacy-card">
+            <h3>💾 純本機儲存</h3>
+            <p>佇列文字與設定僅存於 Chrome 的 <code>chrome.storage.local</code>，附件檔案存於擴充功能專屬的本機 IndexedDB（<code>gq-files</code>），送出或刪除時即刻清除。沒有任何開發者伺服器。</p>
+          </article>
+          <article class="privacy-card">
+            <h3>🔑 最小權限原則</h3>
+            <p>僅申請 <code>storage</code>、<code>alarms</code>、<code>notifications</code> 三項基礎權限，且網站存取範圍嚴格限制在 <code>https://gemini.google.com/*</code>，絕不碰觸你的其他分頁與網站。</p>
+          </article>
+          <article class="privacy-card">
+            <h3>🤝 尊重平台規則</h3>
+            <p>不重放或偽造內部聊天 API，所有送出皆透過真實的頁面輸入框與送出按鈕執行。不會也不可能繞過 Google 的額度限制，只是幫你把訊息安全延後送出。</p>
+          </article>
+        </div>
+
+        <p style="text-align:center; margin-top:24px; font-size:15px;">
+          想了解完整細節？請參閱 <a href="https://github.com/ivantw829/gemini-queue/blob/main/PRIVACY.md" target="_blank" rel="noopener noreferrer">中英雙語隱私權政策（PRIVACY.md）→</a>
+        </p>
+      </div>
+    </section>
+
+    <!-- FAQ Section -->
+    <section class="section" id="faq">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-eyebrow">常見問題</span>
+          <h2>使用前你可能想知道的事</h2>
+        </div>
+
+        <div class="faq-list">
+          <details class="faq-item" open>
+            <summary>這會讓我多用額度或繞過 Google 的限制嗎？</summary>
+            <div class="faq-body">
+              <p>不會。它只是在你被擋下時把訊息存起來，等額度恢復後再透過頁面上的送出按鈕送出，跟你自己晚點回來貼上送出完全一樣。</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>我的訊息與附件會被傳到哪裡？</summary>
+            <div class="faq-body">
+              <p>哪裡都不會。佇列文字只存在你自己 Chrome 的 <code>chrome.storage.local</code>，附件存在擴充功能自己的本機 IndexedDB（<code>gq-files</code>），訊息送出或刪除時就會一併清除。詳見 <a href="https://github.com/ivantw829/gemini-queue/blob/main/PRIVACY.md" target="_blank" rel="noopener noreferrer">PRIVACY.md</a>。</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>為什麼偶爾會看到背景閃過一個 gemini.google.com/usage 分頁又馬上關掉？</summary>
+            <div class="faq-body">
+              <p>因為 <code>gemini.google.com</code> 禁止 <code>iframe</code> 內嵌（<code>X-Frame-Options: DENY</code>）且用量百分比由前端動態渲染，擴充功能會在背景靜默開一個不搶焦點的 <code>/usage</code> 分頁讀取最新百分比，讀完（約 1–2 秒）立刻自動關閉。如果你不想讓它開關分頁，可以調整設定頁的「用量輪詢頻率」（最長 30 分鐘），或自己把一個 <code>/usage</code> 分頁釘選在瀏覽器裡，擴充功能就會直接複用它。</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>可以傳圖片或 PDF 附件嗎？</summary>
+            <div class="faq-body">
+              <p>可以！從電腦選取、拖放或剪貼簿貼上的檔案都會連同文字一起排隊，重置後自動加回輸入區並等上傳完成才送出。Google 雲端硬碟連結的附件無法保存，遇到時會提示並照原本方式處理。</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>支援多個 Google 帳號切換（/u/0、/u/1）或 Gems 嗎？</summary>
+            <div class="faq-body">
+              <p>支援。排隊時會完整保留 <code>/u/&lt;n&gt;</code> 帳號路徑與 <code>/gem/&lt;id&gt;</code>，查詢 <code>/usage</code> 時也會自動對應同一個 <code>/u/&lt;n&gt;/usage</code> 帳號，不會跨帳號誤送或讀錯額度。</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>同一個對話排了好幾則訊息會怎樣？</summary>
+            <div class="faq-body">
+              <p>會依排隊順序一則一則處理：送出第一則後，等 Gemini 回應生成完畢（停止按鈕消失），再自動還原下一則。</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>電腦睡眠或 Chrome 關閉時會怎樣？</summary>
+            <div class="faq-body">
+              <p>Chrome 關閉時無法執行排程。下次打開 Chrome 時會自動重建排程；若重置時間已經過了，會立刻檢查並通知你。</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>支援 Gemini 手機 App 或 Google AI Studio 嗎？</summary>
+            <div class="faq-body">
+              <p>不支援，目前僅支援桌面瀏覽器的 <code>https://gemini.google.com/*</code> 網頁版。</p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- Community CTA -->
+    <section class="section" style="padding-top: 20px;">
+      <div class="container">
+        <div class="cta-banner">
+          <h2>準備好不再為額度上限打斷思路了嗎？</h2>
+          <p>免費開源、完全本機運作。有任何問題、功能建議、或遇見 Gemini 改版需要修正，歡迎加入社群或開 Issue 一起維護！</p>
+          <div class="cta-actions">
+            <a class="btn btn-white" href="https://github.com/ivantw829/gemini-queue" target="_blank" rel="noopener noreferrer">
+              前往 GitHub 專案
+            </a>
+            <a class="btn btn-outline-white" href="https://discord.gg/yEpS7vSJtv" target="_blank" rel="noopener noreferrer">
+              加入 Discord 討論群
+            </a>
+            <a class="btn btn-outline-white" href="https://github.com/ivantw829/claude-queue" target="_blank" rel="noopener noreferrer">
+              姊妹專案：Claude Queue
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-top">
+        <div class="brand">
+          <img src="assets/icon32.png" alt="Gemini Queue" width="26" height="26">
+          <span>Gemini Queue</span>
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/ivantw829/gemini-queue" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a href="https://github.com/ivantw829/gemini-queue/blob/main/GUIDE.md" target="_blank" rel="noopener noreferrer">新手教學</a>
+          <a href="https://github.com/ivantw829/gemini-queue/blob/main/PRIVACY.md" target="_blank" rel="noopener noreferrer">隱私權政策</a>
+          <a href="https://github.com/ivantw829/gemini-queue/issues" target="_blank" rel="noopener noreferrer">問題回報</a>
+          <a href="https://discord.gg/yEpS7vSJtv" target="_blank" rel="noopener noreferrer">Discord</a>
+          <a href="https://github.com/ivantw829/claude-queue" target="_blank" rel="noopener noreferrer">Claude Queue</a>
+          <a href="https://github.com/ivantw829/gemini-queue/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
+        </div>
+      </div>
+      <p class="disclaimer">
+        ⚠️ <strong>免責聲明：</strong>Gemini Queue 為非官方的社群開源專案（MIT License），與 Google 沒有任何隸屬、合作、贊助或背書關係。「Gemini」是 Google LLC 的商標，本頁僅用於說明本工具適用的網站。
+      </p>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>

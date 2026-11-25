@@ -1,5 +1,7 @@
 # Gemini Queue
 
+> 🌐 **說明網頁**：<https://ivantw829.github.io/gemini-queue/>
+>
 > 💬 **討論群組（Discord）：<https://discord.gg/yEpS7vSJtv>** 有問題、建議或想分享用法都歡迎來聊。
 >
 > 🔗 **姊妹專案**：如果你也使用 Claude，歡迎參考 [Claude Queue](https://github.com/ivantw829/claude-queue)。
