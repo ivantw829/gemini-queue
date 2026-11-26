@@ -7,7 +7,7 @@
 (function (root) {
   const GQ = (root.GQ = root.GQ || {});
 
-  const GUIDE_URL = 'https://me.asdtw.org/articles/gemini-queue-guide.html';
+  const GUIDE_URL = 'https://ivantw829.github.io/gemini-queue/';
 
   /** Chrome 的版本號格式：1–4 段、以點分隔的整數 */
   function parse(v) {
@@ -38,7 +38,7 @@
     isValid,
     compare,
     GUIDE_URL,
-    UPDATE_GUIDE_URL: GUIDE_URL + '#s12', // 教學第 12 節「更新到新版本」
+    UPDATE_GUIDE_URL: GUIDE_URL + '#install', // 說明頁「安裝與更新」區塊
     MANIFEST_URL: 'https://raw.githubusercontent.com/ivantw829/gemini-queue/main/manifest.json',
     CHANGES_URL: 'https://github.com/ivantw829/gemini-queue/commits/main',
     CHECK_INTERVAL_MS: 24 * 60 * 60 * 1000

@@ -11,7 +11,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { createEnv } = require('./helpers/sw-env');
 
-const GUIDE = 'https://me.asdtw.org/articles/gemini-queue-guide.html';
+const GUIDE = 'https://ivantw829.github.io/gemini-queue/';
 
 function manifestFetch(version, log = []) {
   return async (url, opts) => {
@@ -159,6 +159,6 @@ test('notification click opens the update section of the guide', async () => {
   await env.listeners.notifClick[0]('gq-update');
   assert.deepEqual(
     env.calls.created.map((t) => t.url),
-    [GUIDE + '#s12']
+    [GUIDE + '#install']
   );
 });
