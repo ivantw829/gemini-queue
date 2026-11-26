@@ -54,7 +54,7 @@
 
 ## 安裝（載入未封裝項目）
 
-> 📖 第一次安裝？看 **[新手教學：從安裝到使用](GUIDE.md)**，有從零開始的圖文級步驟、睡前自動重設檢查清單與疑難排解。
+> 📖 第一次安裝？看 **[新手教學：從安裝到使用](https://ivantw829.github.io/gemini-queue/)**，有從零開始的圖文級步驟、睡前自動重設檢查清單與疑難排解。
 
 1. 下載本專案（按右上角綠色 **Code → Download ZIP** 解壓縮到固定資料夾，或 `git clone https://github.com/ivantw829/gemini-queue.git`）
 2. 開啟 Chrome 網址列輸入 `chrome://extensions`
